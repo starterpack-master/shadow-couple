@@ -1,0 +1,13 @@
+import { chromium } from 'playwright';
+const url = 'file:///projects/sandbox/shadow-couple/dist/index.html';
+const browser = await chromium.launch({ args: ['--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist'] });
+const page = await (await browser.newContext({ viewport: { width: 844, height: 390 } })).newPage();
+await page.goto(url); await page.waitForTimeout(1500);
+await page.screenshot({ path: 'screenshots/00_title.png' });
+await page.click('#goCreate'); await page.waitForTimeout(400);
+await page.screenshot({ path: 'screenshots/00b_create_room.png' });
+await page.fill('#nameMe', '민준'); await page.click('#btnHost');
+await page.waitForFunction(() => /^[A-Z0-9]{4}$/.test(document.querySelector('#codeShow').textContent), null, { timeout: 20000 });
+await page.waitForTimeout(300);
+await page.screenshot({ path: 'screenshots/00c_room_code.png' });
+await browser.close();

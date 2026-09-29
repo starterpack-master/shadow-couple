@@ -201,6 +201,7 @@ export class AudioSys {
       case 'mismatch': [494, 440].forEach((f, i) => this.bell(t + i * 0.15, f, 0.07, this.sfx, 1.0)); break;
       case 'complete': [523, 659, 784, 1047].forEach((f, i) => this.bell(t + i * 0.11, f, 0.08, this.sfx, 2.0)); break;
       case 'heart': this.tone(60, 0.18, 0.25, 'sine', 0.7); this.tone(55, 0.2, 0.2, 'sine', 0.7, 0.22); break;
+      case 'love': [988, 1319, 1760].forEach((f, i) => this.bell(t + i * 0.06, f, 0.05, this.sfx, 0.8)); break;
       case 'beep': this.tone(1320, 0.12, 0.05, 'sine'); break;
       case 'shine': [392, 587, 784, 1175, 1568, 2349].forEach((f, i) => this.bell(t + i * 0.12, f, 0.08, this.sfx, 3)); break;
       case 'card': this.bell(t, 392, 0.06, this.sfx, 3); this.bell(t + 0.3, 587, 0.05, this.sfx, 3); break;

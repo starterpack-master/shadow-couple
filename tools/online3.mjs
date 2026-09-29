@@ -1,0 +1,44 @@
+import { chromium } from 'playwright';
+const url = 'file:///projects/sandbox/shadow-couple/dist/index.html';
+const browser = await chromium.launch({ args: ['--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist'] });
+const mk = async (tag) => { const ctx = await browser.newContext({ viewport: { width: 844, height: 390 }, hasTouch: true }); const p = await ctx.newPage(); p.errors = []; p.on('pageerror', (e) => p.errors.push(tag + ' ' + e.message + ' ' + (e.stack || '').split('\n')[1])); return p; };
+const A = await mk('HOST'), B = await mk('GUEST');
+await A.goto(url + '?auto'); await B.goto(url + '?auto');
+await A.waitForTimeout(600);
+await A.click('#goCreate'); await A.fill('#nameMe', '민준'); await A.click('#btnHost');
+await A.waitForFunction(() => /^[A-Z0-9]{4}$/.test(document.querySelector('#codeShow').textContent), null, { timeout: 20000 });
+const code = await A.textContent('#codeShow');
+await B.click('#goJoin'); await B.fill('#codeIn', code); await B.fill('#nameJoin', '서연'); await B.click('#btnJoin');
+await A.waitForFunction(() => !document.querySelector('#btnHostStart').classList.contains('hidden'), null, { timeout: 25000 });
+const H = (f, a) => A.evaluate(f, a), G = (f, a) => B.evaluate(f, a);
+// 4-3 (index 11): memory -> hold hands
+await H(() => { const g = window.__game; g.net.send({ t: 'start' }); g.startGame(11, false); });
+await A.waitForFunction(() => window.__game.state === 'play' && window.__game.roomIdx === 11, null, { timeout: 40000 });
+await B.waitForFunction(() => window.__game.roomIdx === 11, null, { timeout: 20000 });
+await H(() => { const g = window.__game; const m = g.room.memory; g.bearer.pos.set(m.x, m.z); });
+let sawHold = false;
+for (let i = 0; i < 60; i++) { if (await G(() => !document.querySelector('#hold').classList.contains('hidden'))) { sawHold = true; break; } await B.waitForTimeout(250); }
+await A.waitForFunction(() => window.__game.state === 'play', null, { timeout: 40000 });
+console.log('guest saw hold-hands UI:', sawHold, '| back to play');
+// final room (index 14)
+await H(() => { const g = window.__game; g.resolveRoom('skip'); });
+await A.waitForFunction(() => window.__game.roomIdx === 12 && window.__game.state === 'play' && window.__game.resolveRoom, null, { timeout: 60000 });
+await H(() => { window.__game.resolveRoom('skip'); });
+await A.waitForFunction(() => window.__game.roomIdx === 13 && window.__game.state === 'play' && window.__game.resolveRoom, null, { timeout: 60000 });
+await H(() => { window.__game.resolveRoom('skip'); });
+await A.waitForFunction(() => window.__game.roomIdx === 14 && window.__game.state === 'play', null, { timeout: 40000 });
+await B.waitForFunction(() => window.__game.roomIdx === 14, null, { timeout: 20000 });
+await H(() => { for (const h of window.__game.room.hollows) h.kill(); });
+await A.waitForTimeout(1500);
+await A.waitForFunction(() => !window.__game.room.memory.hidden, null, { timeout: 20000 });
+await H(() => { const g = window.__game; const m = g.room.memory; g.bearer.pos.set(m.x, m.z); });
+await A.waitForFunction(() => window.__game.room.memory.taken && window.__game.state === 'play', null, { timeout: 40000 });
+console.log('lamp ready (host):', await H(() => window.__game.room.lamp.ready));
+await H(() => { const g = window.__game; g.bearer.pos.set(g.room.lamp.x, g.room.lamp.z + 2.2); g.bearer.useB(); });
+await A.waitForFunction(() => !document.querySelector('#ending').classList.contains('hidden'), null, { timeout: 90000 });
+await B.waitForFunction(() => !document.querySelector('#ending').classList.contains('hidden'), null, { timeout: 30000 });
+console.log('HOST ending:', (await A.textContent('#ending .ecredit')).slice(0, 40));
+console.log('GUEST ending:', (await B.textContent('#ending .ecredit')).slice(0, 40), '| guest p2 name tag:', await B.textContent('#p2name'));
+await B.screenshot({ path: 'tools/on3_guest_end.png' });
+console.log('ERRORS:', [...A.errors, ...B.errors].slice(0, 12).join('\n') || 'none');
+await browser.close();

@@ -8,7 +8,7 @@ page.on('console', (m) => { if (m.type() === 'error') errors.push(m.text()); });
 const ev = (f, a) => page.evaluate(f, a);
 await page.goto(url + '?auto');
 await page.waitForTimeout(800);
-await page.fill('#nameA', '민준'); await page.fill('#nameB', '서연');
+await page.click('#goLocal'); await page.fill('#nameA', '민준'); await page.fill('#nameB', '서연');
 await page.click('#btnStart');
 for (let i = 0; i < 14; i++) {
   await page.waitForFunction((i) => window.__game?.state === 'play' && window.__game.roomIdx === i, i, { timeout: 30000 });

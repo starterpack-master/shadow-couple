@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { CFG, rng } from './config.js';
-import { lambert, tex, PAL, hexShift, makeGlow } from './materials.js';
+import { lambert, tex, PAL, hexShift, makeGlow, glowTex } from './materials.js';
 import { makePillar, makeBlock } from './models.js';
 import {
   Crate, Door, MoonPlate, WeightPlate, Flower, Memory, Exit, Rotor, Mover, Hollow, Pedestal, Beam, GreatLamp,
@@ -24,6 +24,7 @@ export class Room {
     this.parse();
     this.buildGeometry();
     this.buildEntities();
+    this.buildDecor();
     this.buildBackdrop();
   }
 
@@ -284,30 +285,151 @@ export class Room {
     for (const c of this.def.exitNeeds || []) if (!this.cond(c)) return false;
     return true;
   }
-  update(dt) {
-    const g = this.g;
+  // 움직이는 지형(회전목마/범퍼카/탐조등): 양쪽 폰 모두에서 돌아요
+  animate(dt) {
     for (const r of this.rotors) r.update(dt);
     for (const m of this.movers) m.update(dt);
-    for (const c of this.crates) c.update(dt);
-    for (const t of this.triggers) t.update(dt);
-    this.computeGroups();
-    for (const d of this.doors) d.update(dt);
-    for (const h of this.hollows) h.update(dt);
-    for (const p of this.pedestals) p.update(dt);
     if (this.beam) this.beam.update(dt);
-    if (this.lamp) {
-      this.lamp.ready = !!(this.memory && this.memory.taken) && this.cond('hollows');
-      this.lamp.update(dt);
-    }
+  }
+  // 판정: 방장(또는 한 폰 모드)에서만
+  logic(dt) {
+    const g = this.g;
+    for (const c of this.crates) c.logic(dt);
+    for (const t of this.triggers) t.logic(dt);
+    this.computeGroups();
+    for (const d of this.doors) d.logic(dt);
+    for (const h of this.hollows) h.logic(dt);
+    if (this.lamp) this.lamp.ready = !!(this.memory && this.memory.taken) && this.cond('hollows');
     if (this.memory) {
       if (this.memory.hidden && this.def.memorySpawn && this.cond(this.def.memorySpawn) && !g.frozen) {
         this.memory.reveal();
         g.onMemoryReveal?.();
       }
-      this.memory.update(dt);
+      this.memory.logic(dt);
     }
-    if (this.exit) this.exit.update(dt);
+    if (this.exit) this.exit.logic(dt);
+  }
+  // 표현: 양쪽 폰 모두에서
+  visual(dt) {
+    const g = this.g;
+    for (const c of this.crates) c.visual(dt);
+    for (const t of this.triggers) t.visual(dt);
+    for (const d of this.doors) d.visual(dt);
+    for (const h of this.hollows) h.visual(dt);
+    for (const p of this.pedestals) p.visual(dt);
+    if (this.lamp) this.lamp.visual(dt);
+    if (this.memory) this.memory.visual(dt);
+    if (this.exit) this.exit.visual(dt);
+    if (this.decor) this.decor(dt, g.time);
     if (this.backdropUpdate) this.backdropUpdate(dt, g.time);
+  }
+  netState() {
+    return {
+      c: this.crates.map((c) => c.net()), d: this.doors.map((d) => d.net()), t: this.triggers.map((t) => t.net()),
+      h: this.hollows.map((h) => h.net()), r: this.rotors.map((r) => r.net()), m: this.movers.map((m) => m.net()),
+      p: this.pedestals.map((p) => p.net()), b: this.beam ? this.beam.net() : 0, l: this.lamp ? this.lamp.net() : 0,
+      mem: this.memory ? this.memory.net() : 0,
+    };
+  }
+  applyNet(s) {
+    const each = (arr, data) => { if (data) for (let i = 0; i < arr.length && i < data.length; i++) arr[i].setNet(data[i]); };
+    each(this.crates, s.c); each(this.doors, s.d); each(this.triggers, s.t); each(this.hollows, s.h);
+    each(this.rotors, s.r); each(this.movers, s.m); each(this.pedestals, s.p);
+    if (this.beam && s.b) this.beam.setNet(s.b);
+    if (this.lamp && s.l) this.lamp.setNet(s.l);
+    if (this.memory && s.mem) this.memory.setNet(s.mem);
+  }
+
+  // ---------------------------------------------------------------- decor (분위기 소품: 판정에는 영향 없음)
+  buildDecor() {
+    const ch = this.ch, W = this.W, H = this.H;
+    const R = rng(ch * 131 + W * 7 + H);
+    const floorTiles = [], wallTops = [];
+    for (let z = 0; z < H; z++) for (let x = 0; x < W; x++) {
+      const k = this.k(x, z), c = this.chars[z][x];
+      if (k === K.FLOOR && c === '.') floorTiles.push([x, z]);
+      if (k === K.WALL) wallTops.push([x, z]);
+    }
+    const M4 = new THREE.Matrix4(), Q = new THREE.Quaternion(), S = new THREE.Vector3(), P = new THREE.Vector3(), E = new THREE.Euler();
+    // 1) 바닥 장식 (낙엽/색종이/크레용 조각/물웅덩이/조개)
+    const decal = { 1: ['#8d8a86', '#6f6c68', 'leaf'], 2: ['#ff8fb8', '#8fd0ff', 'confetti'], 3: ['#e0584f', '#4f8fe0', 'crumb'], 4: ['#233049', '#2c3a58', 'puddle'], 5: ['#f4e3d0', '#e8b8a8', 'shell'] }[ch];
+    if (decal && floorTiles.length) {
+      const tex2 = decalTex(decal[2], decal[0], decal[1]);
+      const n = Math.min(90, Math.floor(floorTiles.length * (ch === 4 ? 0.1 : 0.22)));
+      const mat = lambert({ map: tex2, transparent: true, depthWrite: false, alphaTest: 0.02 });
+      if (ch === 4) { mat.opacity = 0.85; }
+      const geo = new THREE.PlaneGeometry(1, 1); geo.rotateX(-Math.PI / 2);
+      const im = new THREE.InstancedMesh(geo, mat, n);
+      for (let i = 0; i < n; i++) {
+        const [x, z] = floorTiles[Math.floor(R() * floorTiles.length)];
+        const sz = ch === 4 ? 0.9 + R() * 0.8 : 0.35 + R() * 0.35;
+        P.set(x + 0.2 + R() * 0.6, 0.012 + i * 0.00005, z + 0.2 + R() * 0.6);
+        Q.setFromEuler(E.set(0, R() * Math.PI * 2, 0)); S.set(sz, 1, sz * (ch === 4 ? 0.6 : 1));
+        M4.compose(P, Q, S); im.setMatrixAt(i, M4);
+      }
+      im.receiveShadow = true; im.renderOrder = 1;
+      this.group.add(im);
+      if (ch === 4) { this.puddles = mat; }
+    }
+    // 2) 벽 위 소품
+    if (wallTops.length) {
+      const pick = (frac, max) => { const out = []; for (const t of wallTops) if (R() < frac) out.push(t); return out.slice(0, max); };
+      if (ch === 1 || ch === 4) {
+        // 굴뚝/안테나 + (4장) 깜빡이는 빨간 불빛
+        const tops = pick(0.08, 26);
+        const geo = new THREE.BoxGeometry(0.28, 0.5, 0.28);
+        const im = new THREE.InstancedMesh(geo, lambert({ color: ch === 4 ? 0x2a3040 : 0x5a5a66 }), tops.length);
+        tops.forEach(([x, z], i) => { P.set(x + 0.5, CFG.WALL_H + 0.25, z + 0.5); Q.identity(); S.set(1, 0.6 + R(), 1); M4.compose(P, Q, S); im.setMatrixAt(i, M4); });
+        im.castShadow = false; this.group.add(im);
+        if (ch === 4) {
+          const pts = tops.map(([x, z]) => [x + 0.5, CFG.WALL_H + 0.9, z + 0.5]);
+          this.blinkers = glowPoints(this.group, pts, 0xff4050, 0.22);
+        }
+      }
+      if (ch === 2 || ch === 5) {
+        // 벽 위를 따라 이어진 전구 줄
+        const pts = [];
+        for (const [x, z] of wallTops) {
+          const edge = [[1, 0], [-1, 0], [0, 1], [0, -1]].some(([dx, dz]) => this.k(x + dx, z + dz) !== K.WALL);
+          if (edge && (x + z) % 2 === 0) pts.push([x + 0.5, CFG.WALL_H + 0.12, z + 0.5]);
+        }
+        this.bulbs = glowPoints(this.group, pts.slice(0, 160), ch === 2 ? 0xffd9a0 : 0xffc890, 0.3);
+      }
+      if (ch === 3) {
+        // 책장 위 연필/지우개
+        const tops = pick(0.1, 30);
+        const cols = [0xe0584f, 0x4f8fe0, 0xf2c14e, 0x5cb85c, 0xffffff];
+        const geo = new THREE.CylinderGeometry(0.05, 0.05, 0.8, 6); geo.rotateZ(Math.PI / 2);
+        const im = new THREE.InstancedMesh(geo, lambert({ color: 0xffffff }), tops.length);
+        tops.forEach(([x, z], i) => { P.set(x + 0.5, CFG.WALL_H + 0.06, z + 0.5); Q.setFromEuler(E.set(0, R() * 3, 0)); S.set(1, 1, 1); M4.compose(P, Q, S); im.setMatrixAt(i, M4); im.setColorAt(i, new THREE.Color(cols[i % cols.length])); });
+        im.castShadow = false; this.group.add(im);
+      }
+      if (ch === 1 || ch === 5) {
+        // 벽 틈의 풀
+        const tufts = [];
+        for (const [x, z] of floorTiles) {
+          if (R() > 0.12) continue;
+          if (![[1, 0], [-1, 0], [0, 1], [0, -1]].some(([dx, dz]) => this.k(x + dx, z + dz) === K.WALL)) continue;
+          tufts.push([x, z]);
+        }
+        const geo = new THREE.ConeGeometry(0.05, 0.28, 4); geo.translate(0, 0.14, 0);
+        const n = Math.min(tufts.length * 5, 220);
+        const im = new THREE.InstancedMesh(geo, lambert({ color: ch === 1 ? 0x6a7a62 : 0x8aa070 }), n);
+        let i = 0;
+        for (const [x, z] of tufts) for (let k = 0; k < 5 && i < n; k++, i++) {
+          P.set(x + 0.15 + R() * 0.7, 0, z + 0.15 + R() * 0.7);
+          Q.setFromEuler(E.set((R() - 0.5) * 0.6, R() * 3, (R() - 0.5) * 0.6)); S.set(1, 0.6 + R() * 0.8, 1);
+          M4.compose(P, Q, S); im.setMatrixAt(i, M4);
+        }
+        im.count = i; im.castShadow = false; im.receiveShadow = true;
+        this.group.add(im);
+      }
+    }
+    this.decor = (dt, t) => {
+      if (this.blinkers) this.blinkers.material.opacity = 0.35 + 0.65 * (Math.sin(t * 3) > 0.6 ? 1 : 0.15);
+      if (this.bulbs) this.bulbs.material.opacity = 0.75 + Math.sin(t * 2.3) * 0.15;
+      if (this.puddles) this.puddles.opacity = 0.75 + Math.sin(t * 1.7) * 0.1;
+    };
   }
 
   // ---------------------------------------------------------------- backdrop
@@ -454,6 +576,51 @@ class GeoBuilder {
     g.computeBoundingSphere();
     return g;
   }
+}
+
+function glowPoints(group, pts, color, size) {
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pts.flat(), 3));
+  const m = new THREE.PointsMaterial({ color, size, map: glowTex(), transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, sizeAttenuation: true });
+  const p = new THREE.Points(g, m);
+  group.add(p);
+  return p;
+}
+
+const decalCache = new Map();
+function decalTex(kind, a, b) {
+  const key = kind + a + b;
+  if (decalCache.has(key)) return decalCache.get(key);
+  const c = document.createElement('canvas');
+  c.width = c.height = 64;
+  const g = c.getContext('2d');
+  g.translate(32, 32);
+  if (kind === 'leaf') {
+    for (let i = 0; i < 2; i++) {
+      g.save(); g.rotate(i * 1.9); g.fillStyle = i ? b : a;
+      g.beginPath(); g.ellipse(6 * i, 0, 16, 7, 0, 0, Math.PI * 2); g.fill();
+      g.strokeStyle = 'rgba(0,0,0,.25)'; g.lineWidth = 1.5; g.beginPath(); g.moveTo(-14 + 6 * i, 0); g.lineTo(14 + 6 * i, 0); g.stroke(); g.restore();
+    }
+  } else if (kind === 'confetti') {
+    const cols = ['#ff8fb8', '#8fd0ff', '#ffe08f', '#b49bff', '#9dff8a'];
+    for (let i = 0; i < 7; i++) { g.save(); g.rotate(i * 0.9); g.fillStyle = cols[i % cols.length]; g.fillRect(-4 + (i % 3) * 8, -14 + i * 4, 7, 4); g.restore(); }
+  } else if (kind === 'crumb') {
+    const cols = [a, b, '#f2c14e', '#5cb85c'];
+    for (let i = 0; i < 3; i++) { g.save(); g.rotate(i * 2.1); g.fillStyle = cols[i]; g.fillRect(-12, -3 + i * 6, 18, 5); g.restore(); }
+  } else if (kind === 'puddle') {
+    const gr = g.createRadialGradient(0, 0, 4, 0, 0, 30);
+    gr.addColorStop(0, 'rgba(150,180,240,0.55)'); gr.addColorStop(0.7, 'rgba(60,80,130,0.5)'); gr.addColorStop(1, 'rgba(40,50,80,0)');
+    g.fillStyle = gr; g.beginPath(); g.ellipse(0, 0, 30, 24, 0, 0, Math.PI * 2); g.fill();
+    g.strokeStyle = 'rgba(200,220,255,0.25)'; g.lineWidth = 1.5; g.beginPath(); g.ellipse(-4, -3, 14, 9, 0.3, 0, Math.PI * 2); g.stroke();
+  } else if (kind === 'shell') {
+    g.fillStyle = a; g.beginPath(); g.moveTo(0, -12); g.quadraticCurveTo(15, -8, 12, 8); g.lineTo(-12, 8); g.quadraticCurveTo(-15, -8, 0, -12); g.fill();
+    g.strokeStyle = b; g.lineWidth = 1.5; for (let i = -2; i <= 2; i++) { g.beginPath(); g.moveTo(0, -10); g.lineTo(i * 5, 8); g.stroke(); }
+    g.fillStyle = '#ffb07a'; g.save(); g.translate(14, 14); for (let i = 0; i < 5; i++) { g.rotate((Math.PI * 2) / 5); g.fillRect(-1.5, 0, 3, 8); } g.restore();
+  }
+  const t = new THREE.CanvasTexture(c);
+  t.colorSpace = THREE.SRGBColorSpace;
+  decalCache.set(key, t);
+  return t;
 }
 
 export { K };

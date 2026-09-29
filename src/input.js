@@ -20,6 +20,8 @@ export class Input {
     this.btn = new Map();
     this.moved = [false, false];
     this.sticksEnabled = true;
+    this.single = null; // 각자 폰 모드: 내 역할(0/1). 화면 전체가 내 조이스틱이에요
+    this.onEmote = null;
     this.onKey = null; // 대화 넘기기 등
     this.layer = document.getElementById('touch');
     this.joyEl = [document.getElementById('joy0'), document.getElementById('joy1')];
@@ -55,6 +57,13 @@ export class Input {
     this.bindBtn('btnP1A', 0, 'a');
     this.bindBtn('btnP1B', 0, 'b');
     this.bindBtn('btnP2A', 1, 'a');
+    for (const [id, role] of [['btnEmote0', 0], ['btnEmote1', 1]]) {
+      const el = document.getElementById(id);
+      if (!el) continue;
+      const fire = (e) => { e.preventDefault(); e.stopPropagation(); el.classList.add('down'); setTimeout(() => el.classList.remove('down'), 150); this.onEmote?.(this.single ?? role, 'heart'); };
+      el.addEventListener('touchstart', fire, { passive: false });
+      el.addEventListener('mousedown', fire);
+    }
   }
 
   resetAll() {
@@ -89,15 +98,17 @@ export class Input {
 
   keyPress(code) {
     for (let i = 0; i < 2; i++) {
-      if (KEYMAP[i].a.includes(code)) this.q[i].push('a');
-      if (KEYMAP[i].b.includes(code)) this.q[i].push('b');
+      const tgt = this.single !== null ? this.single : i;
+      if (KEYMAP[i].a.includes(code)) this.q[tgt].push('a');
+      if (KEYMAP[i].b.includes(code)) this.q[tgt].push('b');
     }
+    if (code === 'KeyH' || code === 'KeyU') this.onEmote?.(this.single ?? (code === 'KeyH' ? 0 : 1), 'heart');
     if (this.onKey) this.onKey(code);
   }
 
   startStick(id, x, y) {
     if (!this.sticksEnabled) return;
-    const side = x < window.innerWidth / 2 ? 0 : 1;
+    const side = this.single !== null ? this.single : x < window.innerWidth / 2 ? 0 : 1;
     const s = this.st[side];
     if (s.id !== null) return;
     s.id = id; s.ox = s.x = x; s.oy = s.y = y;
@@ -132,8 +143,8 @@ export class Input {
   }
 
   held(i, k) {
-    const km = KEYMAP[i][k];
-    for (const c of km) if (this.keys.has(c)) return true;
+    const maps = this.single !== null ? (i === this.single ? [KEYMAP[0][k], KEYMAP[1][k]] : []) : [KEYMAP[i][k]];
+    for (const km of maps) for (const c of km) if (this.keys.has(c)) return true;
     return this.p[i][k];
   }
 
@@ -149,8 +160,18 @@ export class Input {
       }
       const K = KEYMAP[i];
       const has = (arr) => arr.some((c) => this.keys.has(c));
-      const kx = (has(K.right) ? 1 : 0) - (has(K.left) ? 1 : 0);
-      const kz = (has(K.down) ? 1 : 0) - (has(K.up) ? 1 : 0);
+      let kx = (has(K.right) ? 1 : 0) - (has(K.left) ? 1 : 0);
+      let kz = (has(K.down) ? 1 : 0) - (has(K.up) ? 1 : 0);
+      if (this.single !== null) {
+        // 각자 폰: WASD든 방향키든 내 캐릭터
+        if (i !== this.single) { kx = kz = 0; ax = az = 0; }
+        else {
+          const O = KEYMAP[1 - i];
+          kx += (has(O.right) ? 1 : 0) - (has(O.left) ? 1 : 0);
+          kz += (has(O.down) ? 1 : 0) - (has(O.up) ? 1 : 0);
+          kx = Math.sign(kx); kz = Math.sign(kz);
+        }
+      }
       if (kx || kz) { const m = Math.hypot(kx, kz); ax = kx / m; az = kz / m; }
       let mag = Math.hypot(ax, az);
       if (mag < DEAD) { ax = az = mag = 0; }

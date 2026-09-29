@@ -7,7 +7,12 @@ import {
   makeExitTile, makeRotor, makeCar, makeHollow, makeTower, makeGreatLamp, makePedestal, groupColor,
 } from './models.js';
 
-const ZERO_INPUT = { ax: 0, az: 0, mag: 0, aPressed: false, bPressed: false, aHeld: false, bHeld: false };
+export const ZERO_INPUT = { ax: 0, az: 0, mag: 0, aPressed: false, bPressed: false, aHeld: false, bHeld: false };
+const r2 = (v) => Math.round(v * 100) / 100;
+const r3 = (v) => Math.round(v * 1000) / 1000;
+
+// 구조: logic(dt) = 방장(또는 한 폰 모드)에서만 도는 판정, visual(dt) = 양쪽 폰 모두에서 도는 표현
+//       net() / setNet() = 방장 → 참가자 상태 동기화
 
 // ---------------------------------------------------------------------------
 // 원형 캐릭터 vs 타일 충돌
@@ -47,16 +52,34 @@ function resolve(room, pos, r, who) {
   }
 }
 
-function animWalk(mesh, speed, t, dt, squash = 1) {
+function animChar(mesh, speed, t, dt, squash, blinkT) {
   const u = mesh.userData;
   const k = clamp(speed / 3.5, 0, 1);
   const bob = Math.abs(Math.sin(t * 11)) * 0.07 * k;
+  const breathe = (1 - k) * Math.sin(t * 2.2) * 0.012;
   u.inner.position.y = bob;
   u.inner.rotation.z = Math.sin(t * 11) * 0.06 * k;
   u.inner.rotation.x = damp(u.inner.rotation.x, k * 0.12, 10, dt);
-  const sq = 1 + (squash - 1);
+  const sq = squash + breathe;
   u.inner.scale.set(1 / Math.sqrt(sq), sq, 1 / Math.sqrt(sq));
   u.tailPivot.rotation.x = damp(u.tailPivot.rotation.x, -0.25 - k * 0.9 + Math.sin(t * 7) * 0.12, 8, dt);
+  // 눈 깜빡임
+  const bl = blinkT % 3.6 < 0.12 ? 0.15 : 1;
+  for (const e of u.eyes) e.scale.y = damp(e.scale.y, 1.25 * bl, 30, dt);
+}
+
+// 원격 캐릭터 보간
+function followNet(o, dt) {
+  const T = o.netT;
+  if (!T) return;
+  const dx = T.x - o.pos.x, dz = T.z - o.pos.y;
+  if (dx * dx + dz * dz > 9) { o.pos.set(T.x, T.z); }
+  else {
+    const k = 1 - Math.exp(-dt * 16);
+    o.pos.x += dx * k; o.pos.y += dz * k;
+  }
+  o.face = dampAngle(o.face, T.f, 14, dt);
+  o.speed = T.sp;
 }
 
 // ---------------------------------------------------------------------------
@@ -73,51 +96,71 @@ export class Bearer {
     this.arm.castShadow = false;
     g.scene.add(this.arm);
     this.pos = new THREE.Vector2();
-    this.vx = 0; this.vz = 0; this.face = 0; this.faceT = 0;
-    this.t = 0; this.stepT = 0; this.pushT = 0;
+    this.vx = 0; this.vz = 0; this.face = 0; this.faceT = 0; this.speed = 0;
+    this.t = 0; this.stepT = 0; this.pushT = 0; this.blinkT = Math.random() * 3;
     this.lantern = { held: true, mode: 'low', y: CFG.L.low.y, fwd: CFG.L.low.fwd, R: CFG.L.low.R, placed: null };
     this.light = { type: 'point', x: 0, y: 1, z: 0, R: 7, on: true, warm: true };
     this.squash = 1;
+    this.netT = null;
+    this.dustT = 0;
   }
   attach(occ) {
     this.occ = occ.box(0, CFG.BODY_H / 2, 0, 0.26, CFG.BODY_H / 2, 0.2, 0, 'body');
   }
   reset(x, z, face = 0) {
-    this.pos.set(x, z); this.vx = this.vz = 0; this.face = this.faceT = face;
+    this.pos.set(x, z); this.vx = this.vz = 0; this.face = this.faceT = face; this.speed = 0;
+    this.netT = null;
     const L = this.lantern;
     L.held = true; L.placed = null; L.mode = 'low'; L.y = CFG.L.low.y; L.fwd = CFG.L.low.fwd; L.R = CFG.L.low.R;
     this.updateLight(0, true);
-    this.syncMesh(0);
+    this.visual(0.016);
   }
-  update(dt) {
-    const g = this.g, room = g.room;
-    const inp = g.frozen ? ZERO_INPUT : g.input.p[0];
-    this.t += dt;
+  // 소유자(내 폰)의 조작
+  control(dt, inp) {
+    const room = this.g.room;
     const sp = CFG.BEARER_SPEED;
-    const tx = inp.ax * sp, tz = inp.az * sp;
     const k = inp.mag > 0.05 ? 13 : 16;
-    this.vx = damp(this.vx, tx, k, dt);
-    this.vz = damp(this.vz, tz, k, dt);
+    this.vx = damp(this.vx, inp.ax * sp, k, dt);
+    this.vz = damp(this.vz, inp.az * sp, k, dt);
     const ox = this.pos.x, oz = this.pos.y;
     moveCircle(room, this.pos, this.vx * dt, this.vz * dt, CFG.RADIUS, 'bearer');
-    const rvx = (this.pos.x - ox) / Math.max(dt, 1e-4), rvz = (this.pos.y - oz) / Math.max(dt, 1e-4);
-    this.speed = Math.hypot(rvx, rvz);
+    this.speed = Math.hypot(this.pos.x - ox, this.pos.y - oz) / Math.max(dt, 1e-4);
     if (inp.mag > 0.2) this.faceT = Math.atan2(inp.ax, inp.az);
     this.face = dampAngle(this.face, this.faceT, 15, dt);
-
-    this.handlePush(dt, inp);
-
-    if (!g.frozen) {
-      if (inp.aPressed && g.abil.height) this.toggleHeight();
-      if (inp.bPressed) this.useB();
+    // 밀 때 줄 맞춤 (조작감)
+    const pd = this.pushDir(inp);
+    if (pd && this.touchingCrate(pd)) {
+      const tx = Math.floor(this.pos.x), tz = Math.floor(this.pos.y);
+      if (pd[0]) this.pos.y = damp(this.pos.y, tz + 0.5, 8, dt); else this.pos.x = damp(this.pos.x, tx + 0.5, 8, dt);
     }
-    if (this.speed > 0.8) {
-      this.stepT -= dt;
-      if (this.stepT <= 0) { this.stepT = 0.32; g.audio.play('step'); }
+  }
+  follow(dt) { followNet(this, dt); }
+  pushDir(inp) {
+    if (inp.mag < 0.5) return null;
+    if (Math.abs(inp.ax) > Math.abs(inp.az) * 1.3) return [Math.sign(inp.ax), 0];
+    if (Math.abs(inp.az) > Math.abs(inp.ax) * 1.3) return [0, Math.sign(inp.az)];
+    return null;
+  }
+  touchingCrate([dx, dz]) {
+    const room = this.g.room;
+    const tx = Math.floor(this.pos.x), tz = Math.floor(this.pos.y);
+    const crate = room.crateAt(tx + dx, tz + dz);
+    if (!crate || crate.state !== 'idle') return null;
+    const edge = dx ? (dx > 0 ? tx + 1 - this.pos.x : this.pos.x - tx) : (dz > 0 ? tz + 1 - this.pos.y : this.pos.y - tz);
+    return edge <= CFG.RADIUS + 0.1 ? crate : null;
+  }
+  // 방장만: 상자 밀기 판정
+  logic(dt, inp) {
+    const g = this.g;
+    const pd = g.frozen ? null : this.pushDir(inp);
+    const crate = pd && this.touchingCrate(pd);
+    if (!crate) { this.pushT = 0; return; }
+    this.pushT += dt;
+    if (!g.flags.pushTip) { g.flags.pushTip = true; g.toast('계속 밀면 상자가 한 칸 움직여요'); }
+    if (this.pushT > 0.18) {
+      if (crate.tryPush(pd[0], pd[1])) { g.audio.play('push'); this.squash = 0.88; g.fx.puff(crate.x, 0.1, crate.z, 4, 0x9a8f80, 0.35, 0.6, 0.3, 0.35); }
+      this.pushT = -0.12;
     }
-    this.squash = damp(this.squash, 1, 10, dt);
-    this.updateLight(dt);
-    this.syncMesh(dt);
   }
   toggleHeight() {
     const L = this.lantern;
@@ -129,7 +172,6 @@ export class Bearer {
   }
   useB() {
     const g = this.g, room = g.room, L = this.lantern;
-    // 마지막 방: 거대한 등대에 등불 놓기
     const lamp = room.lamp;
     if (lamp && L.held && lamp.ready && Math.hypot(this.pos.x - lamp.x, this.pos.y - lamp.z) < 2.6) {
       g.onGreatLamp();
@@ -163,37 +205,18 @@ export class Bearer {
       }
     }
   }
-  handlePush(dt, inp) {
-    const room = this.g.room;
-    if (inp.mag < 0.5 || this.g.frozen) { this.pushT = 0; return; }
-    let dx = 0, dz = 0;
-    if (Math.abs(inp.ax) > Math.abs(inp.az) * 1.3) dx = Math.sign(inp.ax);
-    else if (Math.abs(inp.az) > Math.abs(inp.ax) * 1.3) dz = Math.sign(inp.az);
-    else { this.pushT = 0; return; }
-    const tx = Math.floor(this.pos.x), tz = Math.floor(this.pos.y);
-    const crate = room.crateAt(tx + dx, tz + dz);
-    if (!crate || crate.state !== 'idle') { this.pushT = 0; return; }
-    const edge = dx ? (dx > 0 ? tx + 1 - this.pos.x : this.pos.x - tx) : (dz > 0 ? tz + 1 - this.pos.y : this.pos.y - tz);
-    if (edge > CFG.RADIUS + 0.08) { this.pushT = 0; return; }
-    // 밀 때 줄을 맞춰주면 조작감이 좋아져요
-    if (dx) this.pos.y = damp(this.pos.y, tz + 0.5, 8, dt); else this.pos.x = damp(this.pos.x, tx + 0.5, 8, dt);
-    this.pushT += dt;
-    if (!this.g.flags.pushTip) { this.g.flags.pushTip = true; this.g.toast('계속 밀면 상자가 한 칸 움직여요'); }
-    if (this.pushT > 0.18) {
-      if (crate.tryPush(dx, dz)) { this.g.audio.play('push'); this.squash = 0.88; }
-      this.pushT = -0.12;
-    }
-  }
   updateLight(dt, instant = false) {
     const L = this.lantern, li = this.light;
-    if (L.held) {
-      const m = CFG.L[L.mode];
+    this.t += dt;
+    if (L.held || !L.placed) {
+      const m = CFG.L[L.mode] || CFG.L.low;
       const k = instant ? 1 : 1 - Math.exp(-dt * 9);
       L.y += (m.y - L.y) * k; L.fwd += (m.fwd - L.fwd) * k; L.R += (m.R - L.R) * k;
-      const sway = Math.sin(this.t * 5.3) * 0.02 * clamp(this.speed / 3, 0, 1);
+      const mv = clamp(this.speed / 3, 0, 1);
+      const sway = Math.sin(this.t * 5.3) * 0.02 * mv;
       li.x = this.pos.x + Math.sin(this.face) * L.fwd + Math.cos(this.face) * sway;
       li.z = this.pos.y + Math.cos(this.face) * L.fwd - Math.sin(this.face) * sway;
-      li.y = L.y + Math.abs(Math.sin(this.t * 11)) * 0.02 * clamp(this.speed / 3, 0, 1);
+      li.y = L.y + Math.abs(Math.sin(this.t * 11)) * 0.02 * mv;
       li.R = L.R;
     } else {
       const P = L.placed;
@@ -202,11 +225,22 @@ export class Bearer {
       L.R += (P.R - L.R) * k; li.R = L.R;
     }
   }
-  syncMesh(dt) {
+  visual(dt) {
+    const g = this.g;
+    this.blinkT += dt;
+    if (this.speed > 0.8) {
+      this.stepT -= dt;
+      if (this.stepT <= 0) {
+        this.stepT = 0.32;
+        g.audio.play('step');
+        g.fx.puff(this.pos.x - Math.sin(this.face) * 0.2, 0.05, this.pos.y - Math.cos(this.face) * 0.2, 1, g.dustColor || 0x8a8490, 0.25, 0.5, 0.25, 0.25);
+      }
+    }
+    this.squash = damp(this.squash, 1, 10, dt);
     const m = this.mesh;
     m.position.set(this.pos.x, 0, this.pos.y);
     m.rotation.y = this.face;
-    animWalk(m, this.speed || 0, this.t, dt || 0.016, this.squash);
+    animChar(m, this.speed || 0, this.t, dt || 0.016, this.squash, this.blinkT);
     if (this.occ) {
       this.occ.x = this.pos.x; this.occ.z = this.pos.y;
       setYaw(this.occ, this.face);
@@ -215,9 +249,8 @@ export class Bearer {
     this.lanternMesh.position.set(li.x, li.y, li.z);
     this.lanternMesh.rotation.y = this.face;
     const held = this.lantern.held;
-    this.arm.visible = held;
+    this.arm.visible = held && m.visible;
     if (held) {
-      // 어깨 → 등불 손잡이
       const s = new THREE.Vector3(this.pos.x + Math.cos(this.face) * 0.2, 0.74 + m.userData.inner.position.y, this.pos.y - Math.sin(this.face) * 0.2);
       const e = new THREE.Vector3(li.x, li.y + 0.2, li.z);
       const d = e.clone().sub(s);
@@ -230,6 +263,22 @@ export class Bearer {
     const fl = 1 + Math.sin(this.t * 17) * 0.03 + Math.sin(this.t * 7.3) * 0.04;
     lg.glow.scale.setScalar(1.6 * fl);
   }
+  net() {
+    const L = this.lantern, P = L.placed;
+    return [r2(this.pos.x), r2(this.pos.y), r2(this.face), r2(this.speed), L.held ? 1 : 0, L.mode === 'high' ? 1 : 0,
+      P ? (P.kind === 'pedestal' ? 2 : 1) : 0, P ? r2(P.x) : 0, P ? r2(P.z) : 0, r2(this.squash)];
+  }
+  setNet(a, owned) {
+    if (!owned) { this.netT = { x: a[0], z: a[1], f: a[2], sp: a[3] }; this.squash = a[9]; }
+    const L = this.lantern;
+    L.held = !!a[4];
+    L.mode = a[5] ? 'high' : 'low';
+    if (a[6]) {
+      const kind = a[6] === 2 ? 'pedestal' : 'ground';
+      const C = CFG.L[kind];
+      L.placed = { kind, x: a[7], z: a[8], y: C.y, R: C.R };
+    } else L.placed = null;
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -240,6 +289,7 @@ const RING_FS = `varying vec2 vUv; uniform float uHP; uniform vec3 uCol; uniform
 void main(){ vec2 p = vUv*2.0-1.0; float r = length(p); float a = atan(p.x, -p.y)/6.28318 + 0.5;
   float ring = smoothstep(0.74,0.8,r) * smoothstep(1.0,0.94,r); float f = step(a, uHP);
   vec3 c = mix(vec3(0.3,0.28,0.35), uCol, f); gl_FragColor = vec4(c, ring * uA * (0.3 + 0.7*f)); }`;
+const SHADE_STATES = ['alive', 'gone'];
 
 export class Shade {
   constructor(g) {
@@ -255,71 +305,76 @@ export class Shade {
     g.scene.add(this.ring);
     this.pos = new THREE.Vector2();
     this.lastSafe = new THREE.Vector2();
-    this.vx = 0; this.vz = 0; this.face = 0; this.faceT = 0; this.t = 0;
+    this.vx = 0; this.vz = 0; this.face = 0; this.faceT = 0; this.t = 0; this.speed = 0;
     this.hp = 1; this.state = 'alive'; this.goneT = 0;
     this.dashT = 0; this.cd = 0; this.invuln = 0; this.dashX = 0; this.dashZ = 0;
     this.lit = false; this.far = false; this.wispT = 0; this.squash = 1;
-    this.hitCd = 0; this.fade = 1;
+    this.hitCd = 0; this.fade = 1; this.blinkT = Math.random() * 3;
+    this.seq = 0; // 리스폰 번호 (네트워크 위치 보정용)
+    this.netT = null;
+    this.remoteDash = false;
   }
   get alive() { return this.state === 'alive'; }
+  get dashing() { return this.dashT > 0 || this.remoteDash; }
   reset(x, z, face = 0) {
     this.pos.set(x, z); this.lastSafe.set(x, z);
-    this.vx = this.vz = 0; this.face = this.faceT = face;
+    this.vx = this.vz = 0; this.face = this.faceT = face; this.speed = 0;
     this.hp = 1; this.state = 'alive'; this.dashT = 0; this.cd = 0; this.invuln = 0.6; this.fade = 1;
+    this.netT = null; this.remoteDash = false;
     this.mesh.visible = true;
-    this.syncMesh(0.016);
+    this.visual(0.016);
   }
-  update(dt) {
+  control(dt, inp) {
     const g = this.g;
-    this.t += dt;
     this.cd = Math.max(0, this.cd - dt);
-    this.invuln = Math.max(0, this.invuln - dt);
-    this.hitCd = Math.max(0, this.hitCd - dt);
-    if (this.state === 'gone') {
-      this.goneT -= dt;
-      this.mesh.visible = false; this.ring.visible = false;
-      if (this.goneT <= 0) this.respawn();
-      return;
-    }
-    const inp = g.frozen ? ZERO_INPUT : g.input.p[1];
+    if (!this.alive) { this.vx = this.vz = 0; this.speed = 0; return; }
     if (this.dashT > 0) {
       this.dashT -= dt;
       const k = smooth(clamp(this.dashT / CFG.DASH_TIME, 0, 1));
-      this.vx = this.dashX * (CFG.SHADE_SPEED + (CFG.DASH_SPEED - CFG.SHADE_SPEED) * k);
-      this.vz = this.dashZ * (CFG.SHADE_SPEED + (CFG.DASH_SPEED - CFG.SHADE_SPEED) * k);
+      const sp = CFG.SHADE_SPEED + (CFG.DASH_SPEED - CFG.SHADE_SPEED) * k;
+      this.vx = this.dashX * sp; this.vz = this.dashZ * sp;
       if (Math.random() < 0.8) g.fx.puff(this.pos.x, 0.5, this.pos.y, 1, 0x2a1a4a, 0.5, 0.5, 0.2, 0.5);
     } else {
       const sp = CFG.SHADE_SPEED;
       this.vx = damp(this.vx, inp.ax * sp, 14, dt);
       this.vz = damp(this.vz, inp.az * sp, 14, dt);
-      if (inp.aPressed && g.abil.dash && this.cd <= 0 && !g.frozen) {
-        let dx = inp.ax, dz = inp.az;
-        const m = Math.hypot(dx, dz);
-        if (m < 0.2) { dx = Math.sin(this.face); dz = Math.cos(this.face); } else { dx /= m; dz /= m; }
-        this.dashX = dx; this.dashZ = dz; this.dashT = CFG.DASH_TIME; this.cd = CFG.DASH_CD;
-        this.faceT = Math.atan2(dx, dz);
-        this.squash = 0.75;
-        g.audio.play('dash');
-        g.fx.burst(this.pos.x, 0.5, this.pos.y, 10, 0x9d7bff, 2.5, 0.5, 0.2);
-      }
+      if (inp.aPressed && g.abil.dash && this.cd <= 0 && !g.frozen) this.startDash(inp);
     }
     const ox = this.pos.x, oz = this.pos.y;
     moveCircle(g.room, this.pos, this.vx * dt, this.vz * dt, 0.27, 'shade');
     this.speed = Math.hypot(this.pos.x - ox, this.pos.y - oz) / Math.max(dt, 1e-4);
     if (inp.mag > 0.2 && this.dashT <= 0) this.faceT = Math.atan2(inp.ax, inp.az);
     this.face = dampAngle(this.face, this.faceT, 16, dt);
-    this.squash = damp(this.squash, 1, 9, dt);
-
-    if (!g.frozen) this.updateHP(dt);
-    this.syncMesh(dt);
   }
-  updateHP(dt) {
+  startDash(inp) {
     const g = this.g;
+    let dx = inp.ax, dz = inp.az;
+    const m = Math.hypot(dx, dz);
+    if (m < 0.2) { dx = Math.sin(this.face); dz = Math.cos(this.face); } else { dx /= m; dz /= m; }
+    this.dashX = dx; this.dashZ = dz; this.dashT = CFG.DASH_TIME; this.cd = CFG.DASH_CD;
+    this.faceT = Math.atan2(dx, dz);
+    this.squash = 0.75;
+    g.audio.play('dash');
+    g.fx.burst(this.pos.x, 0.5, this.pos.y, 10, 0x9d7bff, 2.5, 0.5, 0.2);
+    g.onShadeDash?.(this.pos.x, this.pos.y);
+  }
+  follow(dt) { followNet(this, dt); }
+  // 방장만: 빛 판정 / 체력 / 흩어짐 / 부활
+  logic(dt) {
+    const g = this.g;
+    this.invuln = Math.max(0, this.invuln - dt);
+    this.hitCd = Math.max(0, this.hitCd - dt);
+    if (this.state === 'gone') {
+      this.goneT -= dt;
+      if (this.goneT <= 0) this.respawn();
+      return;
+    }
+    if (g.frozen) return;
     const e = g.exposure(this.pos.x, this.pos.y, 0.15);
     this.lit = e.lit; this.far = !e.inRange;
-    const immune = this.dashT > 0 || this.invuln > 0;
+    const immune = this.dashing || this.invuln > 0;
     if (immune) {
-      // 무적 중엔 회복도 멈춤
+      // 무적 중
     } else if (e.lit) {
       this.hp -= CFG.DRAIN_LIT * dt;
       if (Math.random() < 0.5) g.fx.burst(this.pos.x, 0.3 + Math.random() * 0.8, this.pos.y, 1, 0xffa060, 1.2, 0.5, 0.14, { up: 2, grav: 1 });
@@ -336,14 +391,16 @@ export class Shade {
     if (this.hp <= 0) this.dissolve();
   }
   hit(amount, dx, dz) {
-    if (!this.alive || this.invuln > 0 || this.dashT > 0 || this.hitCd > 0) return false;
+    if (!this.alive || this.invuln > 0 || this.dashing || this.hitCd > 0) return false;
+    const g = this.g;
     this.hp -= amount;
     this.hitCd = 0.6;
     this.vx += dx * 7; this.vz += dz * 7;
+    g.onShadeKnock?.(dx * 7, dz * 7);
     this.squash = 0.7;
-    this.g.audio.play('hit');
-    this.g.shake(0.25);
-    this.g.fx.burst(this.pos.x, 0.6, this.pos.y, 12, 0xff5566, 2.5, 0.5, 0.2);
+    g.audio.play('hit');
+    g.shake(0.25);
+    g.fx.burst(this.pos.x, 0.6, this.pos.y, 12, 0xff5566, 2.5, 0.5, 0.2);
     if (this.hp <= 0) this.dissolve();
     return true;
   }
@@ -364,36 +421,59 @@ export class Shade {
     const spot = g.findSafeSpot(this.lastSafe);
     this.pos.copy(spot);
     this.lastSafe.copy(spot);
+    this.netT = null;
     this.vx = this.vz = 0;
     this.hp = 1; this.state = 'alive'; this.invuln = 1.2;
-    this.mesh.visible = true; this.ring.visible = true;
+    this.seq++;
     this.squash = 1.4;
     g.fx.burst(spot.x, 0.6, spot.y, 18, 0xc9b6ff, 2, 0.8, 0.2);
     g.audio.play('respawn');
   }
-  syncMesh(dt) {
+  visual(dt) {
+    const g = this.g;
+    this.t += dt;
+    this.blinkT += dt;
+    this.squash = damp(this.squash, 1, 9, dt);
     const m = this.mesh;
+    const show = this.alive;
+    m.visible = show; this.ring.visible = show;
+    if (!show) return;
     m.position.set(this.pos.x, 0, this.pos.y);
     m.rotation.y = this.face;
-    animWalk(m, this.speed || 0, this.t, dt, this.squash);
-    // 흐려짐 표현: 체력이 낮거나 무적일 때 깜빡
+    animChar(m, this.speed || 0, this.t, dt, this.squash, this.blinkT);
     const u = m.userData;
+    // 빛에 타면 눈을 찡그려요
+    if (this.lit) for (const e of u.eyes) e.scale.y = 0.35;
     const blink = this.invuln > 0 ? 0.5 + 0.5 * Math.sin(this.t * 30) : 1;
     u.olMat.opacity = (0.35 + 0.6 * this.hp) * blink * this.fade;
     u.olMat.color.setHex(this.lit ? 0xffa070 : this.far ? 0x7f9cff : 0x8f6bff);
     u.inner.visible = this.fade > 0.02;
     for (const e of u.eyeGlows) e.material.opacity = 0.9 * this.fade;
-    // 어둠의 잔상
     this.wispT -= dt;
     if (this.wispT <= 0 && this.fade > 0.5) {
       this.wispT = 0.12;
-      this.g.fx.puff(this.pos.x, 0.2, this.pos.y, 1, 0x241640, 0.3, 0.9, 0.35, 0.35);
+      g.fx.puff(this.pos.x, 0.2, this.pos.y, 1, 0x241640, 0.3, 0.9, 0.35, 0.35);
     }
     this.ring.position.set(this.pos.x, 0.03, this.pos.y);
     this.ringMat.uniforms.uHP.value = this.hp;
     const showA = this.hp < 0.995 ? 1 : 0;
     this.ringMat.uniforms.uA.value = damp(this.ringMat.uniforms.uA.value, showA * this.fade, 8, dt || 0.016);
     this.ringMat.uniforms.uCol.value.setHex(this.hp < 0.35 ? 0xff6070 : 0xb49bff);
+  }
+  net() {
+    return [r2(this.pos.x), r2(this.pos.y), r2(this.face), r2(this.speed), r3(this.hp), SHADE_STATES.indexOf(this.state),
+      this.dashing ? 1 : 0, r2(this.invuln), this.lit ? 1 : 0, this.far ? 1 : 0, r2(this.fade), r2(this.squash), this.seq];
+  }
+  setNet(a, owned) {
+    const seq = a[12];
+    if (!owned) this.netT = { x: a[0], z: a[1], f: a[2], sp: a[3] };
+    else if (seq !== this.seq) { this.pos.set(a[0], a[1]); this.vx = this.vz = 0; this.dashT = 0; }
+    this.seq = seq;
+    this.hp = a[4];
+    this.state = SHADE_STATES[a[5]] || 'alive';
+    if (!owned) this.remoteDash = !!a[6];
+    this.invuln = a[7]; this.lit = !!a[8]; this.far = !!a[9]; this.fade = a[10];
+    if (!owned) this.squash = a[11];
   }
 }
 
@@ -407,7 +487,7 @@ export class Moth {
     g.scene.add(this.mesh);
     this.pos = new THREE.Vector3(0, 1.8, 0);
     this.t = Math.random() * 10;
-    this.target = null; // 컷신용 고정 위치
+    this.target = null;
     this.visible = true;
   }
   update(dt) {
@@ -424,7 +504,8 @@ export class Moth {
     m.visible = this.visible;
     m.position.copy(this.pos);
     m.position.y += Math.sin(this.t * 9) * 0.04;
-    m.rotation.y = Math.atan2(tx - this.pos.x, tz - this.pos.z) || m.rotation.y;
+    const ry = Math.atan2(tx - this.pos.x, tz - this.pos.z);
+    if (!Number.isNaN(ry)) m.rotation.y = ry;
     const f = Math.sin(this.t * 26) * 0.9;
     m.userData.wings[0].rotation.z = f;
     m.userData.wings[1].rotation.z = -f;
@@ -434,6 +515,7 @@ export class Moth {
 // ---------------------------------------------------------------------------
 // 상자 (1P만 밀 수 있어요. 구멍에 밀어 넣으면 다리가 돼요)
 // ---------------------------------------------------------------------------
+const CRATE_STATES = ['idle', 'slide', 'fall', 'filled'];
 export class Crate {
   constructor(room, tx, tz) {
     this.room = room;
@@ -443,7 +525,7 @@ export class Crate {
     this.mesh = makeCrate(room.ch);
     room.group.add(this.mesh);
     this.occ = room.g.occ.box(this.x, CFG.CRATE_H / 2, this.z, 0.45, CFG.CRATE_H / 2, 0.45, 0, 'crate');
-    this.sync();
+    this.visual();
   }
   tryPush(dx, dz) {
     if (this.state !== 'idle') return false;
@@ -459,7 +541,7 @@ export class Crate {
     this.state = 'slide'; this.t = 0; this.fall = hole;
     return true;
   }
-  update(dt) {
+  logic(dt) {
     if (this.state === 'slide') {
       this.t += dt / 0.2;
       const k = smooth(Math.min(1, this.t));
@@ -478,17 +560,21 @@ export class Crate {
         this.y = bottom;
         this.state = 'filled';
         this.room.fillHole(this.tx, this.tz);
-        this.occ.on = false;
         const g = this.room.g;
         g.audio.play('fill'); g.shake(0.15);
         g.fx.puff(this.x, 0.1, this.z, 10, 0x9a8f80, 0.5, 0.8, 0.6, 0.5);
       }
     }
-    this.sync();
   }
-  sync() {
+  visual() {
     this.mesh.position.set(this.x, this.y, this.z);
     this.occ.x = this.x; this.occ.z = this.z; this.occ.y = this.y + CFG.CRATE_H / 2;
+    this.occ.on = this.state !== 'filled';
+  }
+  net() { return [r2(this.x), r2(this.y), r2(this.z), CRATE_STATES.indexOf(this.state), this.tx, this.tz]; }
+  setNet(a) {
+    this.x = a[0]; this.y = a[1]; this.z = a[2]; this.state = CRATE_STATES[a[3]]; this.tx = a[4]; this.tz = a[5];
+    if (this.state === 'filled') this.room.fillHole(this.tx, this.tz);
   }
 }
 
@@ -499,7 +585,7 @@ export class Door {
   constructor(room, tx, tz, def) {
     this.room = room; this.tx = tx; this.tz = tz;
     this.gname = def.g; this.latch = !!def.latch; this.invert = !!def.invert;
-    this.open = 0; this.want = false; this.latched = false;
+    this.open = 0; this.latched = false;
     const axisX = room.isWallish(tx - 1, tz) || room.isWallish(tx + 1, tz);
     this.mesh = makeDoor(axisX, def.g, room.pal);
     this.mesh.position.set(tx + 0.5, 0, tz + 0.5);
@@ -508,7 +594,7 @@ export class Door {
     this.prevTarget = 0;
   }
   get solid() { return this.open < 0.8; }
-  update(dt) {
+  logic(dt) {
     const room = this.room, g = room.g;
     let want = room.groupActive(this.gname);
     if (this.invert) want = !want;
@@ -523,6 +609,9 @@ export class Door {
       this.prevTarget = target;
     }
     this.open = clamp(this.open + (target ? 1 : -1) * dt * 1.9, 0, 1);
+  }
+  visual() {
+    const g = this.room.g;
     const k = smooth(this.open);
     this.mesh.position.y = -k * (CFG.DOOR_H - 0.04);
     const top = CFG.DOOR_H * (1 - k);
@@ -530,11 +619,22 @@ export class Door {
     this.occ.hy = Math.max(0.01, top / 2); this.occ.y = top / 2;
     this.mesh.userData.runeMat.opacity = 0.55 + 0.45 * Math.sin(g.time * 3 + this.tx);
   }
+  net() { return [r3(this.open), this.latched ? 1 : 0]; }
+  setNet(a) { this.open = a[0]; this.latched = !!a[1]; }
 }
 
 // ---------------------------------------------------------------------------
 // 트리거: 달 발판(그림자), 해 발판(1P/상자), 해바라기(등불 빛)
 // ---------------------------------------------------------------------------
+function setRingProgress(mesh, p) {
+  p = clamp(p, 0, 1);
+  const key = Math.round(p * 40);
+  if (mesh.userData.key === key) return;
+  mesh.userData.key = key;
+  mesh.geometry.dispose();
+  mesh.geometry = new THREE.RingGeometry(0.46, 0.53, 32, 1, Math.PI / 2, -Math.max(0.001, (key / 40) * Math.PI * 2));
+}
+
 export class MoonPlate {
   constructor(room, tx, tz, def) {
     this.room = room; this.x = tx + 0.5; this.z = tz + 0.5; this.gname = def.g;
@@ -544,7 +644,7 @@ export class MoonPlate {
     this.mesh.position.set(this.x, 0, this.z);
     room.group.add(this.mesh);
   }
-  update(dt) {
+  logic(dt) {
     const g = this.room.g, s = g.shade;
     const on = s.alive && Math.hypot(s.pos.x - this.x, s.pos.y - this.z) < 0.5;
     if (on !== this.on) { g.audio.play(on ? 'plateOn' : 'plateOff'); this.on = on; }
@@ -555,14 +655,17 @@ export class MoonPlate {
       }
       this.active = this.latched;
     } else this.active = on;
-    const u = this.mesh.userData;
-    const lvl = this.active ? 1 : on ? 0.6 : 0.25;
-    u.glyphMat.opacity = damp(u.glyphMat.opacity, lvl, 8, dt);
-    u.glow.material.opacity = damp(u.glow.material.opacity, this.active ? 0.8 : on ? 0.35 : 0, 8, dt);
-    u.disc.position.y = damp(u.disc.position.y, on ? 0.015 : 0.04, 12, dt);
-    const p = this.latch ? (this.latched ? 1 : this.holdT / this.need) : 0;
-    setRingProgress(u.prog, p);
   }
+  visual(dt) {
+    const u = this.mesh.userData;
+    const lvl = this.active ? 1 : this.on ? 0.6 : 0.25;
+    u.glyphMat.opacity = damp(u.glyphMat.opacity, lvl, 8, dt);
+    u.glow.material.opacity = damp(u.glow.material.opacity, this.active ? 0.8 : this.on ? 0.35 : 0, 8, dt);
+    u.disc.position.y = damp(u.disc.position.y, this.on ? 0.015 : 0.04, 12, dt);
+    setRingProgress(u.prog, this.latch ? (this.latched ? 1 : this.holdT / this.need) : 0);
+  }
+  net() { return [this.active ? 1 : 0, this.on ? 1 : 0, r2(this.holdT), this.latched ? 1 : 0]; }
+  setNet(a) { this.active = !!a[0]; this.on = !!a[1]; this.holdT = a[2]; this.latched = !!a[3]; }
 }
 
 export class WeightPlate {
@@ -573,7 +676,7 @@ export class WeightPlate {
     this.mesh.position.set(this.x, 0, this.z);
     room.group.add(this.mesh);
   }
-  update(dt) {
+  logic() {
     const room = this.room, g = room.g, b = g.bearer;
     let on = Math.hypot(b.pos.x - this.x, b.pos.y - this.z) < 0.5;
     const c = room.crateAt(this.tx, this.tz);
@@ -581,32 +684,27 @@ export class WeightPlate {
     if (on !== this.on) { g.audio.play(on ? 'plateOn' : 'plateOff'); this.on = on; }
     if (this.latch && on) this.latched = true;
     this.active = this.latch ? this.latched : on;
+  }
+  visual(dt) {
     const u = this.mesh.userData;
     u.glyphMat.opacity = damp(u.glyphMat.opacity, this.active ? 1 : 0.3, 8, dt);
     u.glow.material.opacity = damp(u.glow.material.opacity, this.active ? 0.7 : 0, 8, dt);
-    u.disc.position.y = damp(u.disc.position.y, on ? 0.0 : 0.04, 12, dt);
+    u.disc.position.y = damp(u.disc.position.y, this.on ? 0.0 : 0.04, 12, dt);
   }
-}
-
-function setRingProgress(mesh, p) {
-  p = clamp(p, 0, 1);
-  const key = Math.round(p * 40);
-  if (mesh.userData.key === key) return;
-  mesh.userData.key = key;
-  mesh.geometry.dispose();
-  mesh.geometry = new THREE.RingGeometry(0.46, 0.53, 32, 1, Math.PI / 2, -Math.max(0.001, (key / 40) * Math.PI * 2));
+  net() { return [this.active ? 1 : 0, this.on ? 1 : 0]; }
+  setNet(a) { this.active = !!a[0]; this.on = !!a[1]; }
 }
 
 export class Flower {
   constructor(room, tx, tz, def) {
     this.room = room; this.x = tx + 0.5; this.z = tz + 0.5; this.gname = def.g;
-    this.latch = !!def.latch; this.active = false; this.litT = 0; this.unlitT = 0; this.open = 0;
+    this.latch = !!def.latch; this.active = false; this.litT = 0; this.unlitT = 0; this.open = 0; this.warm = false;
     this.mesh = makeFlower();
     this.mesh.position.set(this.x, 0, this.z);
     room.group.add(this.mesh);
     this.grey = new THREE.Color(0x9a9a9a); this.gold = new THREE.Color(0xffc93c);
   }
-  update(dt) {
+  logic(dt) {
     const g = this.room.g;
     const e = g.exposure(this.x, this.z, 0.6);
     this.warm = e.warm;
@@ -618,7 +716,10 @@ export class Flower {
       g.onFlower?.(this);
     }
     if (this.active && !this.latch && this.unlitT > 0.5) { this.active = false; g.audio.play('plateOff'); }
-    this.open = damp(this.open, this.active ? 1 : e.warm ? 0.25 : 0, 5, dt);
+  }
+  visual(dt) {
+    const g = this.room.g;
+    this.open = damp(this.open, this.active ? 1 : this.warm ? 0.25 : 0, 5, dt);
     const u = this.mesh.userData;
     for (const p of u.petals) p.rotation.x = -1.2 + this.open * 1.1;
     u.head.rotation.y += dt * 0.3;
@@ -627,6 +728,8 @@ export class Flower {
     u.glow.material.opacity = this.open * 0.8;
     u.head.position.y = 0.58 + Math.sin(g.time * 2 + this.x) * 0.02;
   }
+  net() { return [this.active ? 1 : 0, this.warm ? 1 : 0]; }
+  setNet(a) { this.active = !!a[0]; this.warm = !!a[1]; }
 }
 
 // ---------------------------------------------------------------------------
@@ -644,14 +747,27 @@ export class Memory {
   reveal() {
     if (!this.hidden) return;
     this.hidden = false;
-    this.mesh.visible = true;
     const g = this.room.g;
     g.fx.burst(this.x, 0.9, this.z, 40, 0xffc0dc, 3, 1.2, 0.25);
     g.audio.play('bloom');
   }
-  update(dt) {
+  logic(dt) {
     if (this.taken || this.hidden) return;
     const g = this.room.g;
+    if (Math.random() < dt * 6) g.fx.spark(this.x + (Math.random() - 0.5) * 0.8, 0.3 + Math.random(), this.z + (Math.random() - 0.5) * 0.8, 0xffc8e4);
+    if (g.frozen) return;
+    const b = g.bearer, s = g.shade;
+    const near = Math.hypot(b.pos.x - this.x, b.pos.y - this.z) < 0.8 || (s.alive && Math.hypot(s.pos.x - this.x, s.pos.y - this.z) < 0.8);
+    if (near) {
+      this.taken = true;
+      g.fx.burst(this.x, 0.9, this.z, 50, 0xffd0e8, 3.5, 1.4, 0.28);
+      g.onMemory(this);
+    }
+  }
+  visual(dt) {
+    const g = this.room.g;
+    this.mesh.visible = !this.taken && !this.hidden;
+    if (!this.mesh.visible) return;
     this.appear = damp(this.appear, 1, 3, dt);
     const u = this.mesh.userData;
     u.card.rotation.y += dt * 1.4;
@@ -659,17 +775,9 @@ export class Memory {
     u.glow.position.y = u.card.position.y;
     u.ring.scale.setScalar(1 + Math.sin(g.time * 3) * 0.08);
     this.mesh.scale.setScalar(this.appear);
-    if (Math.random() < dt * 6) g.fx.spark(this.x + (Math.random() - 0.5) * 0.8, 0.3 + Math.random(), this.z + (Math.random() - 0.5) * 0.8, 0xffc8e4);
-    if (g.frozen) return;
-    const b = g.bearer, s = g.shade;
-    const near = Math.hypot(b.pos.x - this.x, b.pos.y - this.z) < 0.8 || (s.alive && Math.hypot(s.pos.x - this.x, s.pos.y - this.z) < 0.8);
-    if (near) {
-      this.taken = true;
-      this.mesh.visible = false;
-      g.fx.burst(this.x, 0.9, this.z, 50, 0xffd0e8, 3.5, 1.4, 0.28);
-      g.onMemory(this);
-    }
   }
+  net() { return [this.taken ? 1 : 0, this.hidden ? 1 : 0]; }
+  setNet(a) { this.taken = !!a[0]; this.hidden = !!a[1]; }
 }
 
 // ---------------------------------------------------------------------------
@@ -687,18 +795,17 @@ export class Exit {
     this.glow = makeGlow(0xffd9a0, 3.2, 0.25);
     this.glow.position.set(this.cx, 0.6, this.cz);
     room.group.add(this.glow);
+    // 빛기둥
+    const pm = new THREE.MeshBasicMaterial({ color: 0xffe2b0, transparent: true, opacity: 0, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide });
+    this.pillar = new THREE.Mesh(new THREE.CylinderGeometry(0.9, 1.1, 5, 20, 1, true), pm);
+    this.pillar.position.set(this.cx, 2.5, this.cz);
+    room.group.add(this.pillar);
     this.set = new Set(tiles.map(([x, z]) => x + ',' + z));
   }
   contains(x, z) { return this.set.has(Math.floor(x) + ',' + Math.floor(z)); }
-  update(dt) {
+  logic(dt) {
     const room = this.room, g = room.g;
     const ready = room.exitReady();
-    const t = g.time;
-    for (const m of this.meshes) {
-      m.material.opacity = damp(m.material.opacity, ready ? 0.65 + Math.sin(t * 3) * 0.2 : 0.14, 4, dt);
-      m.rotation.z += dt * (ready ? 0.6 : 0.1);
-    }
-    this.glow.material.opacity = ready ? 0.5 + Math.sin(t * 2) * 0.15 : 0.1;
     if (ready && Math.random() < dt * 8) {
       const [tx, tz] = this.tiles[Math.floor(Math.random() * this.tiles.length)];
       g.fx.spark(tx + Math.random(), 0.1, tz + Math.random(), 0xffe0a8, 0.16, 1.6);
@@ -720,6 +827,17 @@ export class Exit {
       this.holdT = 0;
       if ((bIn || sIn) && !this.hintShown) { this.hintShown = true; g.toast(bIn ? '그림자도 함께 와야 해요' : '등불도 함께 와야 해요'); }
     }
+  }
+  visual(dt) {
+    const g = this.room.g;
+    const ready = this.room.exitReady();
+    const t = g.time;
+    for (const m of this.meshes) {
+      m.material.opacity = damp(m.material.opacity, ready ? 0.65 + Math.sin(t * 3) * 0.2 : 0.14, 4, dt);
+      m.rotation.z += dt * (ready ? 0.6 : 0.1);
+    }
+    this.glow.material.opacity = ready ? 0.5 + Math.sin(t * 2) * 0.15 : 0.1;
+    this.pillar.material.opacity = damp(this.pillar.material.opacity, ready ? 0.07 + Math.sin(t * 2.4) * 0.02 : 0, 3, dt);
   }
 }
 
@@ -746,11 +864,13 @@ export class Rotor {
     for (let i = 0; i < this.arms; i++) {
       const a = this.angle + (i / this.arms) * Math.PI * 2;
       const o = this.occs[i];
-      o.x = this.x + Math.cos(a) * this.len / 2;
-      o.z = this.z + Math.sin(a) * this.len / 2;
+      o.x = this.x + (Math.cos(a) * this.len) / 2;
+      o.z = this.z + (Math.sin(a) * this.len) / 2;
       setYaw(o, -a);
     }
   }
+  net() { return r3(this.angle); }
+  setNet(a) { if (Math.abs(a - this.angle) > 0.05) this.angle = a; }
 }
 
 // ---------------------------------------------------------------------------
@@ -763,7 +883,7 @@ export class Mover {
     this.len = Math.hypot(this.b[0] - this.a[0], this.b[1] - this.a[1]);
     this.t = 0;
     const cols = [0xff6b8a, 0x6bc5ff, 0xffd36b, 0x9dff8a, 0xc49bff];
-    this.mesh = makeCar(def.color ?? cols[Math.floor(Math.random() * cols.length)]);
+    this.mesh = makeCar(def.color ?? cols[room.movers.length % cols.length]);
     room.group.add(this.mesh);
     this.occ = room.g.occ.box(0, 0.3, 0, 0.42, 0.3, 0.42, 0, 'car');
     this.prevX = this.a[0]; this.prevZ = this.a[1];
@@ -772,7 +892,7 @@ export class Mover {
   update(dt) {
     this.t += dt;
     const period = (2 * this.len) / this.speed;
-    const u = ((this.t / period) + this.phase) % 1;
+    const u = (this.t / period + this.phase) % 1;
     const s = smooth(u < 0.5 ? u * 2 : 2 - u * 2);
     const x = this.a[0] + (this.b[0] - this.a[0]) * s;
     const z = this.a[1] + (this.b[1] - this.a[1]) * s;
@@ -784,11 +904,14 @@ export class Mover {
     setYaw(this.occ, this.mesh.rotation.y);
     this.mesh.userData.spark.material.opacity = 0.5 + Math.random() * 0.5;
   }
+  net() { return r2(this.t); }
+  setNet(a) { if (Math.abs(a - this.t) > 0.1) this.t = a; }
 }
 
 // ---------------------------------------------------------------------------
 // 잊음 (그림자를 노리는 잿빛 유령. 빛에 닿으면 타버려요)
 // ---------------------------------------------------------------------------
+const HOLLOW_STATES = ['alive', 'dying', 'dead'];
 export class Hollow {
   constructor(room, tx, tz) {
     this.room = room;
@@ -799,7 +922,8 @@ export class Hollow {
     this.mesh = makeHollow();
     this.mesh.position.set(this.pos.x, 0, this.pos.y);
     room.group.add(this.mesh);
-    this.face = 0;
+    this.face = 0; this.lit = false; this.dieT = 0;
+    this.netT = null;
   }
   kill() {
     if (this.state !== 'alive') return;
@@ -810,20 +934,16 @@ export class Hollow {
     g.fx.burst(this.pos.x, 0.5, this.pos.y, 26, 0xffc080, 3, 0.9, 0.22);
     g.onHollowDie?.(this);
   }
-  update(dt) {
+  logic(dt) {
     const g = this.room.g;
-    this.t += dt;
     if (this.state === 'dying') {
       this.dieT += dt;
-      const k = Math.max(0, 1 - this.dieT / 0.6);
-      this.mesh.scale.set(1 + (1 - k) * 0.6, k, 1 + (1 - k) * 0.6);
-      if (this.dieT > 0.6) { this.state = 'dead'; this.mesh.visible = false; }
+      if (this.dieT > 0.6) this.state = 'dead';
       return;
     }
-    if (this.state !== 'alive') return;
-    const u = this.mesh.userData;
-    if (g.frozen) { this.bob(dt); return; }
+    if (this.state !== 'alive' || g.frozen) return;
     const e = g.exposure(this.pos.x, this.pos.y, 0.5);
+    this.lit = e.lit;
     let dx = 0, dz = 0, sp = 2.1;
     const s = g.shade;
     if (e.lit) {
@@ -833,10 +953,8 @@ export class Hollow {
       sp = 2.5;
       if (Math.random() < 0.6) g.fx.burst(this.pos.x, 0.5 + Math.random() * 0.4, this.pos.y, 1, 0xffb070, 1.5, 0.5, 0.15, { up: 2, grav: 1 });
       if (Math.random() < 0.3) g.fx.puff(this.pos.x, 0.7, this.pos.y, 1, 0xbbb6c8, 0.4, 0.7, 1, 0.4);
-      u.mat.emissive.setHex(0x6a3010);
     } else {
       this.hp = Math.min(1, this.hp + dt * 0.12);
-      u.mat.emissive.setHex(0x15131c);
       if (s.alive && Math.hypot(s.pos.x - this.pos.x, s.pos.y - this.pos.y) < 7.5) {
         dx = s.pos.x - this.pos.x; dz = s.pos.y - this.pos.y;
         this.growlT -= dt;
@@ -853,24 +971,38 @@ export class Hollow {
     this.vx = damp(this.vx, dx * sp, 5, dt); this.vz = damp(this.vz, dz * sp, 5, dt);
     moveCircle(this.room, this.pos, this.vx * dt, this.vz * dt, 0.3, 'hollow');
     if (Math.abs(this.vx) + Math.abs(this.vz) > 0.1) this.face = dampAngle(this.face, Math.atan2(this.vx, this.vz), 6, dt);
-    // 그림자와 접촉
     if (s.alive && this.stun <= 0) {
       const ddx = s.pos.x - this.pos.x, ddz = s.pos.y - this.pos.y, d = Math.hypot(ddx, ddz);
-      if (d < 0.58) {
-        if (s.hit(0.3, ddx / (d || 1), ddz / (d || 1))) { this.stun = 1.1; this.vx = -ddx * 4; this.vz = -ddz * 4; }
-      }
+      if (d < 0.58 && s.hit(0.3, ddx / (d || 1), ddz / (d || 1))) { this.stun = 1.1; this.vx = -ddx * 4; this.vz = -ddz * 4; }
     }
-    if (this.hp <= 0) { this.kill(); return; }
-    this.bob(dt);
+    if (this.hp <= 0) this.kill();
   }
-  bob(dt) {
+  visual(dt) {
+    this.t += dt;
+    if (this.netT) {
+      const k = 1 - Math.exp(-dt * 12);
+      this.pos.x += (this.netT.x - this.pos.x) * k; this.pos.y += (this.netT.z - this.pos.y) * k;
+      this.face = dampAngle(this.face, this.netT.f, 10, dt);
+    }
     const u = this.mesh.userData;
+    if (this.state === 'dead') { this.mesh.visible = false; return; }
+    this.mesh.visible = true;
+    if (this.state === 'dying') {
+      const k = Math.max(0, 1 - this.dieT / 0.6);
+      this.mesh.scale.set(1 + (1 - k) * 0.6, k, 1 + (1 - k) * 0.6);
+      return;
+    }
+    u.mat.emissive.setHex(this.lit ? 0x6a3010 : 0x15131c);
     this.mesh.position.set(this.pos.x, 0.08 + Math.sin(this.t * 3) * 0.06, this.pos.y);
     this.mesh.rotation.y = this.face;
     u.body.scale.set(1 + Math.sin(this.t * 5) * 0.04, 1.25 - Math.sin(this.t * 5) * 0.05, 1);
     u.tails.forEach((t, i) => (t.rotation.z = Math.sin(this.t * 6 + i) * 0.3));
-    const k = 0.6 + 0.4 * this.hp;
-    u.mat.opacity = 0.35 + 0.57 * k;
+    u.mat.opacity = 0.35 + 0.57 * (0.6 + 0.4 * this.hp);
+  }
+  net() { return [r2(this.pos.x), r2(this.pos.y), r2(this.face), r2(this.hp), HOLLOW_STATES.indexOf(this.state), r2(this.dieT), this.lit ? 1 : 0]; }
+  setNet(a) {
+    this.netT = { x: a[0], z: a[1], f: a[2] };
+    this.hp = a[3]; this.state = HOLLOW_STATES[a[4]]; this.dieT = a[5]; this.lit = !!a[6];
   }
 }
 
@@ -884,12 +1016,14 @@ export class Pedestal {
     this.mesh.position.set(this.x, 0, this.z);
     room.group.add(this.mesh);
   }
-  update() {
+  visual() {
     const g = this.room.g;
     const r = this.mesh.userData.ring;
     const near = g.bearer.lantern.held && Math.hypot(g.bearer.pos.x - this.x, g.bearer.pos.y - this.z) < 1.45;
     r.material.opacity = this.has ? 0.1 : near ? 0.6 + Math.sin(g.time * 6) * 0.3 : 0.25;
   }
+  net() { return this.has ? 1 : 0; }
+  setNet(a) { this.has = !!a; }
 }
 
 // ---------------------------------------------------------------------------
@@ -925,9 +1059,10 @@ export class Beam {
     this.mesh.userData.head.rotation.y = Math.atan2(dx, dz);
     this.spot.target.position.set(this.x + dx * 6, 0, this.z + dz * 6);
     this.spot.target.updateMatrixWorld();
-    const cone = this.mesh.userData.cone;
-    cone.rotation.x = -Math.atan2(2.3, 6) * 0.9;
+    this.mesh.userData.cone.rotation.x = -Math.atan2(2.3, 6) * 0.9;
   }
+  net() { return r3(this.angle); }
+  setNet(a) { if (Math.abs(a - this.angle) > 0.05) this.angle = a; }
 }
 
 // ---------------------------------------------------------------------------
@@ -941,7 +1076,7 @@ export class GreatLamp {
     room.group.add(this.mesh);
     room.g.occ.box(this.x, 0.65, this.z, 1.4, 0.65, 1.4, 0, 'lamp');
   }
-  update(dt) {
+  visual() {
     const g = this.room.g;
     const u = this.mesh.userData;
     const near = this.ready && Math.hypot(g.bearer.pos.x - this.x, g.bearer.pos.y - this.z) < 2.6;
@@ -949,6 +1084,8 @@ export class GreatLamp {
     u.glow.scale.setScalar(6 + this.lit * 20);
     u.glassMat.emissive.setRGB(this.lit, this.lit * 0.85, this.lit * 0.6);
   }
+  net() { return [this.ready ? 1 : 0, r2(this.lit)]; }
+  setNet(a) { this.ready = !!a[0]; this.lit = a[1]; }
 }
 
 export { groupColor };

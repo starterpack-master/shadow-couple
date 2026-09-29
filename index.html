@@ -26,6 +26,9 @@
     <div id="topc"><div id="roomTitle"></div><button id="pauseBtn" aria-label="메뉴"><i></i><i></i></button></div>
     <div id="btnP1A" class="gbtn p1 hidden"><svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M8 9l4-5 4 5M8 15l4 5 4-5M12 4v16"/></svg><small>높이</small></div>
     <div id="btnP1B" class="gbtn p1 hidden"><svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="7" y="6" width="10" height="12" rx="2"/><path d="M9 6V4h6v2M12 10v4M4 21h16"/></svg><small id="btnP1BLabel">놓기</small></div>
+    <div id="btnEmote0" class="ebtn p1">♥</div>
+    <div id="btnEmote1" class="ebtn p2">♥</div>
+    <div id="netBadge" class="hidden"></div>
     <div id="btnP2A" class="gbtn p2 hidden"><svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M5 6l6 6-6 6M13 6l6 6-6 6"/></svg><small>대시</small><i class="cd"></i></div>
     <div id="tutL" class="tut left hidden"><div class="hand">☝</div><p></p></div>
     <div id="tutR" class="tut right hidden"><div class="hand">☝</div><p></p></div>
@@ -36,6 +39,7 @@
 
   <div id="toast"></div>
   <div id="flash"></div>
+  <div id="grade"></div>
 
   <div id="dialog" class="hidden">
     <div class="catch"></div>
@@ -76,24 +80,72 @@
     <div class="glow"></div>
     <div class="panel">
       <div class="logo"><span class="l1">그림자가</span><span class="l2">되어줄게</span></div>
-      <div class="tagline">I'll Be Your Shadow · 한 폰으로 둘이 하는 빛과 그림자의 협동 이야기</div>
-      <div class="names">
-        <label class="p1"><span>🏮 1P · 등불</span><input id="nameA" maxlength="8" placeholder="해솔" /></label>
-        <label class="p2"><span>🌑 2P · 그림자</span><input id="nameB" maxlength="8" placeholder="다온" /></label>
+      <div class="tagline">I'll Be Your Shadow · 빛과 그림자, 둘이서 하는 협동 이야기</div>
+
+      <div class="step" id="stepHome">
+        <div class="btns col">
+          <button id="goCreate" class="primary">💌 방 만들기 <small>각자 폰으로</small></button>
+          <button id="goJoin" class="primary alt">🔑 코드로 참가하기</button>
+          <button id="goLocal" class="ghost">📱 한 폰으로 같이 하기</button>
+        </div>
+        <div class="how">
+          <div><b>🏮</b>등불은 빛을 비추고, 그림자를 만들어요</div>
+          <div><b>🌑</b>그림자는 빛에 닿으면 흐려져요</div>
+          <div><b>🔗</b>서버 없이 폰끼리 직접 연결돼요</div>
+          <div><b>🎧</b>소리를 켜면 더 좋아요 · 약 1시간</div>
+        </div>
       </div>
-      <div class="btns">
-        <button id="btnStart" class="primary">함께 시작하기</button>
-        <button id="btnContinue" class="ghost hidden">이어하기</button>
+
+      <div class="step hidden" id="stepCreate">
+        <div class="roles">
+          <button class="role p1 sel" data-role="0"><b>🏮</b><span>등불</span><small>빛을 들고 길을 비춰요</small></button>
+          <button class="role p2" data-role="1"><b>🌑</b><span>그림자</span><small>그늘 속으로만 다녀요</small></button>
+        </div>
+        <label class="one"><span>내 이름</span><input id="nameMe" maxlength="8" placeholder="이름" /></label>
+        <div class="btns">
+          <button id="btnHost" class="primary">방 만들기</button>
+          <button class="ghost back">뒤로</button>
+        </div>
       </div>
-      <div class="how">
-        <div><b>📱</b>폰 하나를 <u>가로</u>로 같이 들어요</div>
-        <div><b class="p1c">◀</b>왼쪽 화면 = 1P 등불</div>
-        <div><b class="p2c">▶</b>오른쪽 화면 = 2P 그림자</div>
-        <div><b>🎧</b>소리를 켜면 더 좋아요 · 약 1시간</div>
+
+      <div class="step hidden" id="stepCode">
+        <div class="codeLabel">상대 폰에서 <b>코드로 참가하기</b>를 누르고 이 코드를 입력해요</div>
+        <div class="code" id="codeShow">····</div>
+        <div class="status" id="hostStatus"><i class="spin"></i>상대를 기다리는 중…</div>
+        <div class="btns">
+          <button id="btnHostStart" class="primary hidden">함께 시작하기</button>
+          <button id="btnHostContinue" class="ghost hidden">이어하기</button>
+          <button class="ghost back">취소</button>
+        </div>
       </div>
-      <div class="keys">PC: 1P <kbd>WASD</kbd> <kbd>Q</kbd>높이 <kbd>E</kbd>놓기 · 2P <kbd>방향키</kbd> <kbd>/</kbd>대시 · 대화 <kbd>Space</kbd></div>
+
+      <div class="step hidden" id="stepJoin">
+        <label class="one"><span>참가 코드</span><input id="codeIn" maxlength="4" placeholder="ABCD" autocapitalize="characters" autocomplete="off" spellcheck="false" /></label>
+        <label class="one"><span>내 이름</span><input id="nameJoin" maxlength="8" placeholder="이름" /></label>
+        <div class="status" id="joinStatus"></div>
+        <div class="btns">
+          <button id="btnJoin" class="primary">참가하기</button>
+          <button class="ghost back">뒤로</button>
+        </div>
+      </div>
+
+      <div class="step hidden" id="stepLocal">
+        <div class="names">
+          <label class="p1"><span>🏮 1P · 등불 (왼쪽 화면)</span><input id="nameA" maxlength="8" placeholder="해솔" /></label>
+          <label class="p2"><span>🌑 2P · 그림자 (오른쪽 화면)</span><input id="nameB" maxlength="8" placeholder="다온" /></label>
+        </div>
+        <div class="btns">
+          <button id="btnStart" class="primary">함께 시작하기</button>
+          <button id="btnContinue" class="ghost hidden">이어하기</button>
+          <button class="ghost back">뒤로</button>
+        </div>
+        <div class="keys">폰 하나를 가로로 같이 들어요 · PC: 1P <kbd>WASD</kbd> <kbd>Q</kbd> <kbd>E</kbd> · 2P <kbd>방향키</kbd> <kbd>/</kbd></div>
+      </div>
     </div>
   </div>
+
+  <div id="conn" class="hidden"><div class="panel"><div class="ic">📡</div><p id="connMsg">연결이 끊겼어요. 다시 연결하는 중…</p><button id="connHome" class="ghost">처음 화면으로</button></div></div>
+  <div id="waitNote" class="hidden"><i class="spin"></i><span></span></div>
 
   <div id="menu" class="hidden">
     <div class="panel">

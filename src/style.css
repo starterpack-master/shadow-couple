@@ -15,7 +15,7 @@ html, body {
   font-family: var(--font); touch-action: none; user-select: none; -webkit-user-select: none;
   overscroll-behavior: none; -webkit-touch-callout: none;
 }
-#app { position: fixed; inset: 0; background: linear-gradient(#141824, #2c3144); transition: background 1.5s ease; overflow: hidden; }
+#app { position: fixed; inset: 0; background: linear-gradient(#141824, #2c3144); transition: background 1.5s ease; overflow: hidden; overflow: clip; }
 #c { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
 #touch { position: absolute; inset: 0; z-index: 2; }
 .hidden { display: none !important; }
@@ -159,12 +159,12 @@ html, body {
 #photo.torn .polaroid { clip-path: polygon(0 0, 100% 0, 97% 12%, 100% 25%, 95% 41%, 99% 55%, 94% 70%, 98% 86%, 96% 100%, 0 100%); }
 
 /* ---------- card / narr ---------- */
-#card { position: absolute; inset: 0; z-index: 25; background: radial-gradient(#15101f, #050308); display: flex; flex-direction: column; align-items: center; justify-content: center; animation: cardIn 1s ease; }
+#card { position: absolute; inset: 0; z-index: 32; background: radial-gradient(#15101f, #050308); display: flex; flex-direction: column; align-items: center; justify-content: center; animation: cardIn 1s ease; }
 @keyframes cardIn { from { opacity: 0; } }
 #card .small { font-size: 13px; letter-spacing: .5em; opacity: .6; margin-bottom: 14px; }
 #card .big { font-size: 40px; letter-spacing: .12em; background: linear-gradient(#fff6e4, #ffc46b); -webkit-background-clip: text; background-clip: text; color: transparent; }
 #card .sub { margin-top: 14px; font-family: var(--pen); font-size: 24px; opacity: .8; color: #d7c9ff; }
-#narr { position: absolute; inset: 0; z-index: 24; background: #030205; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; padding: 20px; }
+#narr { position: absolute; inset: 0; z-index: 33; background: #030205; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; padding: 20px; }
 #narr .lines div { font-size: 19px; line-height: 2; opacity: 0; transform: translateY(8px); transition: opacity 1.2s, transform 1.2s; word-break: keep-all; }
 #narr .lines div.on { opacity: .95; transform: none; }
 #narr .lines div.pen { font-family: var(--pen); font-size: 28px; color: #d9ccff; }
@@ -231,4 +231,71 @@ kbd { font-family: inherit; font-size: 10px; padding: 1px 5px; border-radius: 4p
   .gbtn { width: 56px; height: 56px; }
   #btnP1B { right: calc(50% + 80px); }
   #card .big { font-size: 32px; }
+}
+
+
+/* ---------- lobby ---------- */
+#title .step { animation: tutIn .35s ease; }
+#title .btns.col { flex-direction: column; align-items: center; max-width: 330px; margin: 14px auto 16px; }
+#title .btns.col button { width: 100%; }
+#title button small { font-size: 12px; font-weight: 400; opacity: .7; margin-left: 6px; }
+button.primary.alt { background: linear-gradient(135deg, #c9b6ff, #8f6bff); color: #150c26; box-shadow: 0 6px 24px rgba(140,100,255,.35); }
+#title .roles { display: flex; gap: 12px; justify-content: center; margin: 4px 0 14px; }
+#title .role { width: 150px; padding: 12px 10px; border-radius: 18px; border: 2px solid rgba(255,255,255,.12); background: rgba(15,12,26,.75); color: var(--ink);
+  font-family: var(--font); cursor: pointer; display: flex; flex-direction: column; align-items: center; gap: 3px; transition: transform .12s, border-color .15s, background .15s; }
+#title .role b { font-size: 30px; } #title .role span { font-size: 17px; } #title .role small { font-size: 11px; opacity: .65; }
+#title .role.p1.sel { border-color: var(--p1); background: rgba(255,196,107,.14); transform: translateY(-2px); }
+#title .role.p2.sel { border-color: var(--p2); background: rgba(169,139,255,.16); transform: translateY(-2px); }
+#title label.one { display: flex; flex-direction: column; gap: 5px; width: 230px; margin: 0 auto 6px; }
+#title label.one input { width: 100%; text-align: center; }
+#codeIn { letter-spacing: .4em; font-size: 22px !important; text-transform: uppercase; }
+#title .codeLabel { font-size: 13px; opacity: .8; margin-top: 4px; }
+#title .code { font-size: 64px; letter-spacing: .28em; margin: 6px 0 4px 0.28em; font-weight: 700; background: linear-gradient(#fff6e4, #ffc46b); -webkit-background-clip: text; background-clip: text; color: transparent; filter: drop-shadow(0 0 16px rgba(255,190,110,.45)); }
+#title .status { min-height: 22px; font-size: 14px; opacity: .85; margin: 4px 0; }
+#title .status.ok { color: #9fe8c8; } #title .status.err { color: #ff9aa2; }
+.spin { display: inline-block; width: 12px; height: 12px; border-radius: 50%; border: 2px solid rgba(255,255,255,.25); border-top-color: #ffd08a; margin-right: 8px; vertical-align: -1px; animation: sp 0.8s linear infinite; }
+@keyframes sp { to { transform: rotate(360deg); } }
+
+/* ---------- online HUD ---------- */
+#app.online #hud .divider { display: none; }
+#app.online #btnP1A, #app.online #btnP2A { right: max(18px, env(safe-area-inset-right)); left: auto; bottom: max(16px, env(safe-area-inset-bottom)); width: 72px; height: 72px; }
+#app.online #btnP1B { right: calc(max(18px, env(safe-area-inset-right)) + 84px); bottom: max(16px, env(safe-area-inset-bottom)); width: 64px; height: 64px; }
+.ebtn { position: absolute; pointer-events: auto; width: 40px; height: 40px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 19px; z-index: 6;
+  color: #ff8fb8; background: rgba(20,14,30,.72); border: 1px solid rgba(255,143,184,.45); transition: transform .1s; }
+.ebtn.down { transform: scale(1.25); }
+#btnEmote0 { left: max(14px, env(safe-area-inset-left)); bottom: max(14px, env(safe-area-inset-bottom)); }
+#btnEmote1 { right: max(14px, env(safe-area-inset-right)); bottom: max(14px, env(safe-area-inset-bottom)); }
+#app.online #btnEmote0, #app.online #btnEmote1 { left: auto; right: max(26px, env(safe-area-inset-right)); bottom: calc(max(16px, env(safe-area-inset-bottom)) + 84px); }
+#app.online.me0 #btnEmote1, #app.online.me1 #btnEmote0 { display: none; }
+#netBadge { position: absolute; top: calc(max(8px, env(safe-area-inset-top)) + 44px); right: max(14px, env(safe-area-inset-right)); font-size: 11px; opacity: .6; }
+#netBadge.bad { color: #ff9aa2; opacity: 1; }
+#conn { position: absolute; inset: 0; z-index: 35; background: rgba(4,3,8,.78); display: flex; align-items: center; justify-content: center; text-align: center; }
+#conn .panel { padding: 22px; border-radius: 20px; background: rgba(18,14,30,.95); border: 1px solid rgba(255,255,255,.12); max-width: 88vw; }
+#conn .ic { font-size: 40px; animation: breathe 1.6s ease-in-out infinite; }
+#waitNote { position: absolute; z-index: 21; left: 50%; top: 42%; transform: translateX(-50%); padding: 12px 20px; border-radius: 16px; background: rgba(12,10,22,.85);
+  border: 1px solid rgba(255,255,255,.14); font-size: 15px; white-space: pre-line; text-align: center; }
+
+/* 각자 폰: 선택지는 가운데 한 줄 */
+#choice.single .half.left { flex: 1; }
+#choice.single .half.right { display: none; }
+/* 각자 폰: 손잡기 패드 */
+#hold.single .pad.left { left: 34%; }
+#hold.single .pad.right { right: 34%; }
+#hold .pad.ghost { opacity: .45; border-style: dotted; }
+#hold .pad.ghost.on { opacity: 1; }
+#hold .pad.p1 { color: var(--p1); } #hold .pad.p2 { color: var(--p2); }
+
+/* ---------- 화면 질감 (비네트 + 필름 그레인) ---------- */
+#grade { position: absolute; inset: 0; z-index: 3; pointer-events: none;
+  background: radial-gradient(ellipse at 50% 55%, transparent 55%, rgba(0,0,0,.42) 100%); }
+#grade::after { content: ''; position: absolute; inset: -50%; opacity: .06; background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='160' height='160'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2' stitchTiles='stitch'/></filter><rect width='100%' height='100%' filter='url(%23n)'/></svg>");
+  animation: grain 1.2s steps(6) infinite; }
+@keyframes grain { 0% { transform: translate(0,0); } 20% { transform: translate(-3%,2%); } 40% { transform: translate(2%,-3%); } 60% { transform: translate(-2%,-2%); } 80% { transform: translate(3%,3%); } 100% { transform: translate(0,0); } }
+@media (max-height: 420px) {
+  #title .code { font-size: 48px; }
+  #title .roles { margin-bottom: 8px; }
+  #title .role { padding: 8px; } #title .role b { font-size: 24px; }
+  #title .btns.col { margin: 8px auto; gap: 8px; }
+  #title .btns.col button { padding: 10px 20px; }
+  #app.online #btnP1A, #app.online #btnP2A { width: 64px; height: 64px; }
 }
