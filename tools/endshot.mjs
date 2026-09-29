@@ -1,0 +1,17 @@
+import { chromium } from 'playwright';
+const url = 'file:///projects/sandbox/shadow-couple/dist/index.html';
+const browser = await chromium.launch({ args: ['--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist'] });
+const page = await (await browser.newContext({ viewport: { width: 844, height: 390 } })).newPage();
+const errors = []; page.on('pageerror', (e) => errors.push(e.message));
+await page.goto(url + '?room=5-3&go&auto');
+await page.waitForFunction(() => window.__game?.state === 'play', null, { timeout: 20000 });
+await page.evaluate(() => { const g = window.__game; g.ui.auto = false; g.ui.names = { A: '민준', B: '서연' }; g.frozen = true; g.playHospital(); });
+await page.waitForTimeout(4000);
+await page.evaluate(() => { const g = window.__game; g.hospital.eyeOpen = 1; document.querySelector('#dialog').classList.add('hidden'); document.querySelector('#fade').style.opacity = 0; });
+await page.waitForTimeout(3000);
+await page.screenshot({ path: '/projects/sandbox/shadow-couple/tools/shot_hosp1.png' });
+await page.evaluate(() => { window.__game.hospital.camKTarget = 1; });
+await page.waitForTimeout(6000);
+await page.screenshot({ path: '/projects/sandbox/shadow-couple/tools/shot_hosp2.png' });
+console.log('ERR', errors.join('\n'));
+await browser.close();

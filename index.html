@@ -1,0 +1,125 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
+<meta name="theme-color" content="#0d0b14" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+<title>그림자가 되어줄게 — I'll Be Your Shadow</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Gowun+Dodum&family=Nanum+Pen+Script&display=swap" rel="stylesheet" />
+</head>
+<body>
+<div id="app">
+  <canvas id="c"></canvas>
+  <div id="touch"></div>
+  <div id="joy0" class="joy p1"><div class="knob"></div></div>
+  <div id="joy1" class="joy p2"><div class="knob"></div></div>
+
+  <div id="hud" class="hidden">
+    <div class="divider"></div>
+    <div id="p1tag" class="ptag p1"><span class="ico"></span><span class="nm" id="p1name">1P</span><span class="sub" id="lampMode">낮게</span></div>
+    <div id="p2tag" class="ptag p2"><span class="nm" id="p2name">2P</span><div class="hp"><i id="hpFill"></i></div></div>
+    <div id="topc"><div id="roomTitle"></div><button id="pauseBtn" aria-label="메뉴"><i></i><i></i></button></div>
+    <div id="btnP1A" class="gbtn p1 hidden"><svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M8 9l4-5 4 5M8 15l4 5 4-5M12 4v16"/></svg><small>높이</small></div>
+    <div id="btnP1B" class="gbtn p1 hidden"><svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="7" y="6" width="10" height="12" rx="2"/><path d="M9 6V4h6v2M12 10v4M4 21h16"/></svg><small id="btnP1BLabel">놓기</small></div>
+    <div id="btnP2A" class="gbtn p2 hidden"><svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M5 6l6 6-6 6M13 6l6 6-6 6"/></svg><small>대시</small><i class="cd"></i></div>
+    <div id="tutL" class="tut left hidden"><div class="hand">☝</div><p></p></div>
+    <div id="tutR" class="tut right hidden"><div class="hand">☝</div><p></p></div>
+    <div id="burnR" class="burn"></div>
+    <div id="bolt">⚡</div>
+    <div id="objective"></div>
+  </div>
+
+  <div id="toast"></div>
+  <div id="flash"></div>
+
+  <div id="dialog" class="hidden">
+    <div class="catch"></div>
+    <div class="box">
+      <div class="speaker"></div>
+      <div class="text"></div>
+      <div class="next">▼</div>
+    </div>
+  </div>
+
+  <div id="choice" class="hidden">
+    <div class="prompt"></div>
+    <div class="half left"><div class="who p1"></div><div class="opts"></div></div>
+    <div class="half right"><div class="who p2"></div><div class="opts"></div></div>
+  </div>
+
+  <div id="hold" class="hidden">
+    <div class="prompt"></div>
+    <div class="pad left p1"><span>🤚</span><small></small></div>
+    <div class="pad right p2"><span>🤚</span><small></small></div>
+    <div class="ring"><i></i></div>
+  </div>
+
+  <div id="photo" class="hidden">
+    <div class="polaroid">
+      <div class="pic"></div>
+      <div class="ptitle"></div>
+      <div class="pcap"></div>
+    </div>
+    <div class="tap">화면을 탭해서 계속</div>
+  </div>
+
+  <div id="card" class="hidden"><div class="small"></div><div class="big"></div><div class="sub"></div></div>
+  <div id="narr" class="hidden"><div class="lines"></div><div class="tap">탭해서 계속</div></div>
+  <div id="fade"></div>
+
+  <div id="title">
+    <div class="glow"></div>
+    <div class="panel">
+      <div class="logo"><span class="l1">그림자가</span><span class="l2">되어줄게</span></div>
+      <div class="tagline">I'll Be Your Shadow · 한 폰으로 둘이 하는 빛과 그림자의 협동 이야기</div>
+      <div class="names">
+        <label class="p1"><span>🏮 1P · 등불</span><input id="nameA" maxlength="8" placeholder="해솔" /></label>
+        <label class="p2"><span>🌑 2P · 그림자</span><input id="nameB" maxlength="8" placeholder="다온" /></label>
+      </div>
+      <div class="btns">
+        <button id="btnStart" class="primary">함께 시작하기</button>
+        <button id="btnContinue" class="ghost hidden">이어하기</button>
+      </div>
+      <div class="how">
+        <div><b>📱</b>폰 하나를 <u>가로</u>로 같이 들어요</div>
+        <div><b class="p1c">◀</b>왼쪽 화면 = 1P 등불</div>
+        <div><b class="p2c">▶</b>오른쪽 화면 = 2P 그림자</div>
+        <div><b>🎧</b>소리를 켜면 더 좋아요 · 약 1시간</div>
+      </div>
+      <div class="keys">PC: 1P <kbd>WASD</kbd> <kbd>Q</kbd>높이 <kbd>E</kbd>놓기 · 2P <kbd>방향키</kbd> <kbd>/</kbd>대시 · 대화 <kbd>Space</kbd></div>
+    </div>
+  </div>
+
+  <div id="menu" class="hidden">
+    <div class="panel">
+      <h3>잠깐 쉬어가기</h3>
+      <div class="hint"></div>
+      <button data-act="resume" class="primary">계속하기</button>
+      <button data-act="hint">💡 힌트 보기</button>
+      <button data-act="restart">↺ 이 방 다시 시작</button>
+      <button data-act="skip">⏭ 이 방 건너뛰기</button>
+      <button data-act="sound">🔊 소리 끄기</button>
+      <button data-act="title">처음 화면으로</button>
+    </div>
+  </div>
+
+  <div id="ending" class="hidden">
+    <div class="inner">
+      <div class="etitle">그림자가 되어줄게</div>
+      <div class="esub">빛이 있는 곳엔, 언제나 내가 있을게.</div>
+      <div class="ecredit"></div>
+      <div class="escore"></div>
+      <button id="btnAgain" class="primary">처음으로</button>
+    </div>
+  </div>
+
+  <div id="rotate"><div class="ic">📱</div><p>휴대폰을 <b>가로</b>로 돌려주세요</p><small>둘이서 한 화면을 반씩 나눠 써요</small></div>
+</div>
+<script type="module" src="/src/main.js"></script>
+</body>
+</html>
