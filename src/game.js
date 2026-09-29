@@ -591,6 +591,14 @@ export class Game {
       const dZ = ((maxZ - minZ + 4) / 2 / Math.tan(vf)) * 0.9;
       td = clamp(Math.max(dX, dZ, 23), 23, 38);
     }
+    // 방 밖의 허공이 너무 많이 보이지 않도록 카메라 중심을 방 안쪽으로 당겨요
+    if (this.room && !F) {
+      const W = this.room.W, H = this.room.H;
+      const hw = td * Math.tan(Math.atan(Math.tan((this.camera.fov * Math.PI) / 360) * this.camera.aspect)) * 0.78;
+      const hz = td * Math.tan((this.camera.fov * Math.PI) / 360) * 0.95;
+      tx = W > hw * 2 ? clamp(tx, hw - 0.5, W - hw + 0.5) : W / 2;
+      tz = H > hz * 2 ? clamp(tz, hz - 1.5, H - hz + 0.5) : H / 2 - 0.6;
+    }
     if (instant) { cam.x = tx; cam.z = tz; cam.d = td; }
     else {
       cam.x = damp(cam.x, tx, 3.2, dt); cam.z = damp(cam.z, tz, 3.2, dt); cam.d = damp(cam.d, td, 2.2, dt);

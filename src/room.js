@@ -318,12 +318,12 @@ export class Room {
     this.group.add(grp);
     const cx = W / 2, cz = H / 2;
     const fogCol = new THREE.Color(pal.fog);
-    const dark = (hex, k = 0.55) => new THREE.MeshBasicMaterial({ color: new THREE.Color(hex).multiplyScalar(0.55).lerp(fogCol, Math.min(0.85, k + 0.25)), fog: true });
+    const dark = (hex, k = 0.55) => new THREE.MeshBasicMaterial({ color: new THREE.Color(hex).multiplyScalar(0.5).lerp(fogCol.clone().multiplyScalar(0.55), Math.min(0.8, k + 0.2)), fog: false });
 
     if (ch === 1 || ch === 4 || ch === 0) {
       // 도시 실루엣
       const bm = dark(ch === 4 ? '#141a28' : '#1b1d27', 0.18);
-      const winM = new THREE.MeshBasicMaterial({ color: ch === 4 ? 0xffd7a0 : 0xffc680, transparent: true, opacity: ch === 4 ? 0.8 : 0.45, fog: true });
+      const winM = new THREE.MeshBasicMaterial({ color: ch === 4 ? 0xffd7a0 : 0xffc680, transparent: true, opacity: ch === 4 ? 0.7 : 0.35, fog: false });
       for (let i = 0; i < 46; i++) {
         const a = Math.PI * 1.08 + R() * Math.PI * 0.84, d = Math.max(W, H) * 0.65 + 10 + R() * 16;
         const x = cx + Math.cos(a) * d * 1.1, z = cz + Math.sin(a) * d * 0.8; // 방 뒤쪽(북쪽)과 양옆에만
